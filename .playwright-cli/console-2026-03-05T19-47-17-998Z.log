@@ -1,0 +1,1 @@
+[   50522ms] [ERROR] Failed to load resource: the server responded with a status of 502 () @ https://beaconlab.kissterralab.workers.dev/api/analytics/state-analysis?qbc=325&planId=089bd324-1dd9-47cf-8704-d590123860bd&startDate=2026-01-01&endDate=2026-01-31:0

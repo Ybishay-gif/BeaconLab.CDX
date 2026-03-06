@@ -1,0 +1,33 @@
+Every growth team faces the same challenge: critical pricing decisions, fragmented signals, and constant pressure to scale without sacrificing efficiency.
+
+The opportunity is simple: test strategy before execution. Validate outcomes before committing budget. Scale only what is expected to perform.
+
+Beacon Lab turns continuous experimentation data into clear recommendations by state, segment, and channel so teams can move faster with confidence.
+
+Now let us walk through how Beacon Lab transforms your strategy into measurable outcomes.
+
+In Beacon Lab, a plan is your decision framework. It combines your business assumptions, target metrics, and execution rules so every scenario can be tested consistently.
+
+Start by creating a plan with a clear objective. This gives your team a shared context for experimentation and makes every output traceable to the same planning goal.
+
+Next, set core parameters like target budget and constraints. These values become the model inputs that shape all projections and optimization recommendations.
+
+You can add what-if decisions by state, segment, and channel. This is where scenario planning happens, allowing you to compare multiple growth paths before execution.
+
+In Plan Strategy, create rules that map your intent to specific states and segments. This creates precise control instead of one-size-fits-all bidding behavior.
+
+For each rule, set performance guardrails like maximum uplifts and target combined ratio. These constraints keep recommendations aligned with profitability goals.
+
+Price Exploration Decisions translates strategy into action. It selects testing points and shows expected impact on win rate, cost, binds, and efficiency metrics.
+
+Behind the scenes, thousands of ongoing experiments feed this table. The platform continuously learns the ideal pricing level for each state and channel combination.
+
+State Plan Analysis converts all model outputs into a national view, so teams can instantly see where strategy is aggressive, balanced, or efficiency-focused.
+
+Hovering any state reveals the full story: spend, combined ratio, ROE, binds, uplift, and estimated incremental opportunity. This supports fast, data-driven decisions.
+
+The data models select the most relevant testing points for each strategy rule and forecast expected outcomes accordingly, turning experimentation data into clear actions.
+
+When ready, run the plan to generate scenario outputs and compare alternatives side by side. This enables confident prioritization before budget is deployed.
+
+In summary, Beacon Lab helps teams move from intuition to evidence. You can test faster, price smarter, and select the plan with the highest expected business impact.

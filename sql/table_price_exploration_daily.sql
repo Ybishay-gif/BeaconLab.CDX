@@ -1,0 +1,29 @@
+CREATE TABLE IF NOT EXISTS `crblx-beacon-prod.planning_app.price_exploration_daily` (
+  date DATE,
+  channel_group_name STRING,
+  state STRING,
+  price_adjustment_percent INT64,
+  opps INT64,
+  bids FLOAT64,
+  total_impressions FLOAT64,
+  avg_position FLOAT64,
+  sold FLOAT64,
+  win_rate FLOAT64,
+  avg_bid FLOAT64,
+  cpc FLOAT64,
+  total_spend FLOAT64,
+  click_to_quote FLOAT64,
+  quote_start_rate FLOAT64,
+  number_of_quote_started FLOAT64,
+  number_of_quotes FLOAT64,
+  stat_sig STRING,
+  stat_sig_channel_group STRING,
+  cpc_uplift FLOAT64,
+  cpc_uplift_channelgroup FLOAT64,
+  win_rate_uplift FLOAT64,
+  win_rate_uplift_channelgroup FLOAT64,
+  additional_clicks FLOAT64,
+  refreshed_at TIMESTAMP
+)
+PARTITION BY date
+CLUSTER BY channel_group_name, state, price_adjustment_percent;

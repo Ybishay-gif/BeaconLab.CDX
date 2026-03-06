@@ -1,0 +1,17 @@
+- generic [ref=e3]:
+  - heading "Sign In" [level=2] [ref=e4]
+  - paragraph [ref=e5]: Choose admin access or user login.
+  - generic [ref=e6]:
+    - generic [ref=e7]:
+      - heading "Admin Access" [level=3] [ref=e8]
+      - text: Admin Code
+      - textbox "Admin Code" [ref=e9]:
+        - /placeholder: Enter admin code
+      - button "Login as Admin" [ref=e10]
+    - generic [ref=e11]:
+      - heading "User Login" [level=3] [ref=e12]
+      - text: User Email
+      - textbox "User Email" [ref=e13]:
+        - /placeholder: you@company.com
+      - button "Continue" [ref=e14]
+  - paragraph

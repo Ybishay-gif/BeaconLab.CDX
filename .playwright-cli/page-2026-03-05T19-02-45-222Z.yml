@@ -1,0 +1,90 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - heading "Sign In" [level=2] [ref=e4]
+    - paragraph [ref=e5]: Choose admin access or user login.
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - heading "Admin Access" [level=3] [ref=e8]
+        - generic [ref=e9]: Admin Code
+        - textbox "Admin Code" [ref=e10]:
+          - /placeholder: Enter admin code
+        - button "Login as Admin" [ref=e11] [cursor=pointer]
+      - generic [ref=e12]:
+        - heading "User Login" [level=3] [ref=e13]
+        - generic [ref=e14]: User Email
+        - textbox "User Email" [ref=e15]:
+          - /placeholder: you@company.com
+        - button "Continue" [ref=e16] [cursor=pointer]
+    - paragraph
+  - main [ref=e17]:
+    - complementary [ref=e18]:
+      - generic [ref=e19]:
+        - button "Collapse sidebar" [ref=e20] [cursor=pointer]:
+          - img [ref=e21]
+        - button "Pinned sidebar" [ref=e23] [cursor=pointer]:
+          - img [ref=e24]
+      - heading "Beacon Lab" [level=1] [ref=e26]
+      - generic [ref=e27]:
+        - generic [ref=e28]: Plan
+        - combobox "Plan" [ref=e29]:
+          - option "Select plan" [selected]
+        - generic [ref=e30]: Activity + Lead Type
+        - combobox "Activity + Lead Type" [ref=e31]:
+          - option "All" [selected]
+          - option "Clicks + Auto"
+          - option "Clicks + Home"
+          - option "Leads + Auto"
+          - option "Leads + Home"
+          - option "Calls + Auto"
+          - option "Calls + Home"
+      - navigation [ref=e32]:
+        - button "Plan" [ref=e33] [cursor=pointer]:
+          - img [ref=e35]
+          - generic [ref=e37]: Plan
+        - generic [ref=e38]:
+          - button "Plan Builder" [ref=e39] [cursor=pointer]:
+            - img [ref=e41]
+            - generic [ref=e43]: Plan Builder
+          - button "Targets" [ref=e44] [cursor=pointer]:
+            - img [ref=e46]
+            - generic [ref=e48]: Targets
+          - button "Plan Strategy" [ref=e49] [cursor=pointer]:
+            - img [ref=e51]
+            - generic [ref=e53]: Plan Strategy
+          - button "Price Exploration Decisions" [ref=e54] [cursor=pointer]:
+            - img [ref=e56]
+            - generic [ref=e58]: Price Exploration Decisions
+        - button "Analytics" [ref=e59] [cursor=pointer]:
+          - img [ref=e61]
+          - generic [ref=e63]: Analytics
+        - button "Settings" [ref=e64] [cursor=pointer]:
+          - img [ref=e66]
+          - generic [ref=e68]: Settings
+    - generic [ref=e69]:
+      - generic [ref=e70]:
+        - generic [ref=e72]:
+          - generic [ref=e73]:
+            - heading "Plans" [level=2] [ref=e74]
+            - generic [ref=e75]:
+              - button "Add Plan" [ref=e76] [cursor=pointer]
+              - button "Refresh" [ref=e77] [cursor=pointer]
+          - table [ref=e79]:
+            - rowgroup [ref=e80]:
+              - row "Name Description Performance Date Range Price Exploration Date Range Created Actions" [ref=e81]:
+                - columnheader "Name" [ref=e82]
+                - columnheader "Description" [ref=e83]
+                - columnheader "Performance Date Range" [ref=e84]
+                - columnheader "Price Exploration Date Range" [ref=e85]
+                - columnheader "Created" [ref=e86]
+                - columnheader "Actions" [ref=e87]
+            - rowgroup
+          - paragraph
+        - text: ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕
+      - text: ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕
+  - dialog "Delete Plan" [ref=e89]:
+    - heading "Delete Plan" [level=3] [ref=e90]
+    - paragraph
+    - paragraph [ref=e91]: This will delete all related strategy rules, settings, decisions, runs, and results for this plan.
+    - generic [ref=e92]:
+      - button "Cancel" [ref=e93] [cursor=pointer]
+      - button "Delete Plan" [ref=e94] [cursor=pointer]

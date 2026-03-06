@@ -1,0 +1,20 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - heading "Sign In" [level=2] [ref=e4]
+    - paragraph [ref=e5]: Choose admin access or user login.
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - heading "Admin Access" [level=3] [ref=e8]
+        - generic [ref=e9]: Admin Code
+        - textbox "Admin Code" [ref=e10]:
+          - /placeholder: Enter admin code
+          - text: Kis123kis1!
+        - button "Signing in..." [disabled] [ref=e18] [cursor=pointer]
+      - generic [ref=e12]:
+        - heading "User Login" [level=3] [ref=e13]
+        - generic [ref=e14]: User Email
+        - textbox "User Email" [ref=e15]:
+          - /placeholder: you@company.com
+        - button "Continue" [ref=e16] [cursor=pointer]
+    - paragraph [ref=e17]: Signing in as admin...
+  - text: ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕

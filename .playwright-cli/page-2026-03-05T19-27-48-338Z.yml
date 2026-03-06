@@ -1,0 +1,102 @@
+- main [ref=e18]:
+  - complementary [ref=e19]:
+    - generic [ref=e20]:
+      - button "Collapse sidebar" [ref=e21] [cursor=pointer]:
+        - img [ref=e22]
+      - button "Sidebar pinned" [ref=e24] [cursor=pointer]:
+        - img [ref=e25]
+    - heading "Beacon Lab" [level=1] [ref=e27]
+    - generic [ref=e28]:
+      - generic [ref=e29]: Plan
+      - combobox "Plan" [ref=e30]:
+        - option "Select plan"
+        - option "Timeout Fix 1772738860370"
+        - option "Jan plan" [selected]
+        - option "Live Smoke Plan"
+      - generic [ref=e31]: Activity + Lead Type
+      - combobox "Activity + Lead Type" [ref=e32]:
+        - option "All" [selected]
+        - option "Clicks + Auto"
+        - option "Clicks + Home"
+        - option "Leads + Auto"
+        - option "Leads + Home"
+        - option "Calls + Auto"
+        - option "Calls + Home"
+    - navigation [ref=e33]:
+      - button "Plan" [ref=e34] [cursor=pointer]:
+        - img [ref=e36]
+        - generic [ref=e38]: Plan
+      - generic [ref=e39]:
+        - button "Plan Builder" [ref=e40] [cursor=pointer]:
+          - img [ref=e42]
+          - generic [ref=e44]: Plan Builder
+        - button "Targets" [ref=e45] [cursor=pointer]:
+          - img [ref=e47]
+          - generic [ref=e49]: Targets
+        - button "Plan Strategy" [ref=e50] [cursor=pointer]:
+          - img [ref=e52]
+          - generic [ref=e54]: Plan Strategy
+        - button "Price Exploration Decisions" [ref=e55] [cursor=pointer]:
+          - img [ref=e57]
+          - generic [ref=e59]: Price Exploration Decisions
+      - button "Analytics" [ref=e60] [cursor=pointer]:
+        - img [ref=e62]
+        - generic [ref=e64]: Analytics
+      - button "Settings" [ref=e65] [cursor=pointer]:
+        - img [ref=e67]
+        - generic [ref=e69]: Settings
+  - generic [ref=e70]:
+    - generic [ref=e71]:
+      - generic [ref=e73]:
+        - generic [ref=e74]:
+          - heading "Plans" [level=2] [ref=e75]
+          - generic [ref=e76]:
+            - button "Add Plan" [ref=e77] [cursor=pointer]
+            - button "Refresh" [ref=e78] [cursor=pointer]
+        - table [ref=e80]:
+          - rowgroup [ref=e81]:
+            - row "Name Description Rules Performance Date Range Price Exploration Date Range Created Actions" [ref=e82]:
+              - columnheader "Name" [ref=e83]
+              - columnheader "Description" [ref=e84]
+              - columnheader "Rules" [ref=e85]
+              - columnheader "Performance Date Range" [ref=e86]
+              - columnheader "Price Exploration Date Range" [ref=e87]
+              - columnheader "Created" [ref=e88]
+              - columnheader "Actions" [ref=e89]
+          - rowgroup [ref=e90]:
+            - row "Timeout Fix 1772738860370 tmp 0 - - 3/5/2026, 9:27:41 PM Edit Clone Delete" [ref=e91]:
+              - cell "Timeout Fix 1772738860370" [ref=e92]
+              - cell "tmp" [ref=e93]
+              - cell "0" [ref=e94]
+              - cell "-" [ref=e95]
+              - cell "-" [ref=e96]
+              - cell "3/5/2026, 9:27:41 PM" [ref=e97]
+              - cell "Edit Clone Delete" [ref=e98]:
+                - button "Edit" [ref=e99] [cursor=pointer]
+                - button "Clone" [ref=e100] [cursor=pointer]
+                - button "Delete" [ref=e101] [cursor=pointer]
+            - row "Jan plan January plan is taking data from Jan for the performance and for the price exploration 63 - - 3/1/2026, 3:55:24 PM Edit Clone Delete" [ref=e102]:
+              - cell "Jan plan" [ref=e103]
+              - cell "January plan is taking data from Jan for the performance and for the price exploration" [ref=e104]
+              - cell "63" [ref=e105]
+              - cell "-" [ref=e106]
+              - cell "-" [ref=e107]
+              - cell "3/1/2026, 3:55:24 PM" [ref=e108]
+              - cell "Edit Clone Delete" [ref=e109]:
+                - button "Edit" [ref=e110] [cursor=pointer]
+                - button "Clone" [ref=e111] [cursor=pointer]
+                - button "Delete" [ref=e112] [cursor=pointer]
+            - row "Live Smoke Plan created by codex 63 - - 3/1/2026, 3:54:35 PM Edit Clone Delete" [ref=e113]:
+              - cell "Live Smoke Plan" [ref=e114]
+              - cell "created by codex" [ref=e115]
+              - cell "63" [ref=e116]
+              - cell "-" [ref=e117]
+              - cell "-" [ref=e118]
+              - cell "3/1/2026, 3:54:35 PM" [ref=e119]
+              - cell "Edit Clone Delete" [ref=e120]:
+                - button "Edit" [ref=e121] [cursor=pointer]
+                - button "Clone" [ref=e122] [cursor=pointer]
+                - button "Delete" [ref=e123] [cursor=pointer]
+        - paragraph [ref=e124]: Plan created.
+      - text: ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕
+    - text: ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕

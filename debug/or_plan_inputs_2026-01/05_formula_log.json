@@ -1,0 +1,47 @@
+{
+  "formulas": {
+    "additional_clicks": "(win_rate_at_tp * total_bids_channel_state) - (baseline_win_rate * total_bids_channel_state)",
+    "click_to_quote_ratio": "if channel+state quotes>=10 then quotes/sold at channel+state else state_quotes/state_sold (fallback to channel_quote/total_bids_channel_state)",
+    "additional_quotes": "additional_clicks * click_to_quote_ratio",
+    "q2b": "if binds_state_channel>=5 then state_segment_q2b else channel_segment_q2b",
+    "additional_binds": "additional_quotes * q2b",
+    "additional_budget": "expected_total_cost - current_spend_channel_state"
+  },
+  "checks": {
+    "additional_clicks_sum": 1676.484133369808,
+    "additional_binds_sum": 45.16900206599723,
+    "additional_budget_sum": 55431.22410706025
+  },
+  "strategyRow": {
+    "rule_name": "Tier 1 - Robust Growth",
+    "states": [
+      "OR"
+    ],
+    "segments": [
+      "MCH",
+      "MCR",
+      "SCH",
+      "SCR"
+    ],
+    "bids": 258919,
+    "sold": 8208,
+    "total_spend": 255687.7500000001,
+    "cpc": 31.15104166666668,
+    "wr": 0.03170103391408124,
+    "quotes": 2749,
+    "binds": 165,
+    "current_cpb": 1549.6227272727278,
+    "expected_cpb": 1480.3275984979118,
+    "q2b": 0.06002182611858858,
+    "performance": 3.256228254196314,
+    "roe": 0.002632994710217649,
+    "cor": 0.9965983667652754,
+    "additional_clicks": 1676.484133369808,
+    "additional_binds": 45.16900206599723,
+    "wr_uplift": 0.20407191077168474,
+    "cpc_uplift": 0.2089646771705963,
+    "cpb_uplift": -0.03884324246774412,
+    "expected_total_cost": 311118.97410706035,
+    "additional_budget": 55431.22410706027
+  }
+}

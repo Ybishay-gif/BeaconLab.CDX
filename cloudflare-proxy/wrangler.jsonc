@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "beaconlab",
+  "main": "src/index.js",
+  "compatibility_date": "2026-03-01",
+  "vars": {
+    "ORIGIN_BASE": "https://planning-api.example.com",
+    "ORIGIN_BASE_FALLBACK": ""
+  }
+}

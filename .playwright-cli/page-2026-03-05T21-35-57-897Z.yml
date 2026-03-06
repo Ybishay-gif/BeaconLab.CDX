@@ -1,0 +1,185 @@
+- main [ref=e18]:
+  - complementary [ref=e19]:
+    - generic [ref=e20]:
+      - button "Collapse sidebar" [ref=e21] [cursor=pointer]:
+        - img [ref=e22]
+      - button "Sidebar pinned" [ref=e24] [cursor=pointer]:
+        - img [ref=e25]
+    - heading "Beacon Lab" [level=1] [ref=e27]
+    - generic [ref=e28]:
+      - generic [ref=e29]: Plan
+      - combobox "Plan" [ref=e30]:
+        - option "Select plan"
+        - option "Jan plan (Clone)" [selected]
+        - option "Jan plan"
+        - option "Live Smoke Plan"
+      - generic [ref=e31]: Activity + Lead Type
+      - combobox "Activity + Lead Type" [ref=e32]:
+        - option "All" [selected]
+        - option "Clicks + Auto"
+        - option "Clicks + Home"
+        - option "Leads + Auto"
+        - option "Leads + Home"
+        - option "Calls + Auto"
+        - option "Calls + Home"
+    - navigation [ref=e33]:
+      - button "Plan" [ref=e34] [cursor=pointer]:
+        - img [ref=e36]
+        - generic [ref=e38]: Plan
+      - generic [ref=e39]:
+        - button "Plan Builder" [ref=e40] [cursor=pointer]:
+          - img [ref=e42]
+          - generic [ref=e44]: Plan Builder
+        - button "Targets" [ref=e45] [cursor=pointer]:
+          - img [ref=e47]
+          - generic [ref=e49]: Targets
+        - button "Plan Strategy" [ref=e50] [cursor=pointer]:
+          - img [ref=e52]
+          - generic [ref=e54]: Plan Strategy
+        - button "Price Exploration Decisions" [ref=e55] [cursor=pointer]:
+          - img [ref=e57]
+          - generic [ref=e59]: Price Exploration Decisions
+      - button "Analytics" [ref=e60] [cursor=pointer]:
+        - img [ref=e62]
+        - generic [ref=e64]: Analytics
+      - button "Settings" [ref=e65] [cursor=pointer]:
+        - img [ref=e67]
+        - generic [ref=e69]: Settings
+  - generic [ref=e70]:
+    - generic [ref=e71]:
+      - text: ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕
+      - generic [ref=e147]:
+        - generic [ref=e148]:
+          - heading "Price Exploration Decisions" [level=2] [ref=e149]
+          - generic [ref=e151]:
+            - generic [ref=e152]: Date Range
+            - textbox "Price exploration decisions date range" [ref=e153] [cursor=pointer]:
+              - /placeholder: Select date range
+              - text: 2026-02-01 to 2026-02-09
+            - generic [ref=e154]:
+              - button "This Month" [ref=e155] [cursor=pointer]
+              - button "Last Month" [ref=e156] [cursor=pointer]
+              - button "Last 14 Days" [ref=e157] [cursor=pointer]
+              - button "Last 30 Days" [ref=e158] [cursor=pointer]
+        - generic [ref=e159]:
+          - generic [ref=e160]:
+            - generic [ref=e161]: Filter by State (multi-select)
+            - button "All states" [ref=e163] [cursor=pointer]
+          - generic [ref=e164]:
+            - generic [ref=e165]: Filter by Channel Group (multi-select)
+            - button "All channel groups" [ref=e167] [cursor=pointer]
+          - generic [ref=e168]:
+            - generic [ref=e169]: Filter by Segment (multi-select)
+            - button "All segments" [ref=e171] [cursor=pointer]
+        - generic [ref=e172]:
+          - button "Apply Filters" [active] [ref=e173] [cursor=pointer]
+          - button "Clear Filters" [ref=e174] [cursor=pointer]
+        - generic [ref=e288]: Loading data...
+        - paragraph [ref=e282]: Filters are ready. Click Apply Filters.
+        - generic [ref=e175]:
+          - complementary [ref=e176]:
+            - heading "State & Channel Pairs" [level=3] [ref=e177]
+            - paragraph [ref=e284]: No state/channel pairs for selected filters.
+          - generic [ref=e178]:
+            - generic [ref=e180]:
+              - generic [ref=e181]:
+                - heading "Select a state and channel pair" [level=3] [ref=e182]
+                - paragraph [ref=e183]: "Strategy Rule: -"
+                - paragraph [ref=e184]: Recommended testing point and evidence will appear here.
+              - generic [ref=e185]:
+                - generic [ref=e186]: Bid Adjustment (Manual Override)
+                - combobox "Bid Adjustment (Manual Override)" [ref=e187]
+            - generic [ref=e188]:
+              - article [ref=e189]:
+                - heading "Bids" [level=3] [ref=e190]
+                - paragraph [ref=e191]: "-"
+              - article [ref=e192]:
+                - heading "Sold" [level=3] [ref=e193]
+                - paragraph [ref=e194]: "-"
+              - article [ref=e195]:
+                - heading "Binds" [level=3] [ref=e196]
+                - paragraph [ref=e197]: "-"
+              - article [ref=e198]:
+                - heading "ROE" [level=3] [ref=e199]
+                - paragraph [ref=e200]: "-"
+              - article [ref=e201]:
+                - heading "COR" [level=3] [ref=e202]
+                - paragraph [ref=e203]: "-"
+              - article [ref=e204]:
+                - heading "WR Uplift" [level=3] [ref=e205]
+                - paragraph [ref=e206]: "-"
+              - article [ref=e207]:
+                - heading "CPC Uplift" [level=3] [ref=e208]
+                - paragraph [ref=e209]: "-"
+              - article [ref=e210]:
+                - heading "CPB Uplift" [level=3] [ref=e211]
+                - paragraph [ref=e212]: "-"
+              - article [ref=e213]:
+                - heading "Additional Clicks" [level=3] [ref=e214]
+                - paragraph [ref=e215]: "-"
+              - article [ref=e216]:
+                - heading "Additional Binds" [level=3] [ref=e217]
+                - paragraph [ref=e218]: "-"
+              - article [ref=e219]:
+                - heading "Additional Budget" [level=3] [ref=e220]
+                - paragraph [ref=e221]: "-"
+            - generic [ref=e222]:
+              - 'heading "Testing Point Impact: Win-Rate vs CPC vs CPB" [level=3] [ref=e223]'
+              - paragraph [ref=e285]: No testing points to chart.
+            - generic [ref=e225]:
+              - heading "Testing Point Table" [level=3] [ref=e226]
+              - button "Export to Excel" [ref=e228] [cursor=pointer]
+              - table [ref=e230]:
+                - rowgroup [ref=e231]:
+                  - row "Testing Point ↕ Bids ↕ Sold ↕ Binds ↕ WR ↕ CPC ↕ Current CPB ↕ Expected CPB ↕ WR Uplift ↕ CPC Uplift ↕ CPB Uplift ↕ Additional Clicks ↕ Additional Binds ↕ Additional Budget ↕ Stat-Sig ↕ Evidence ↕" [ref=e232]:
+                    - columnheader "Testing Point ↕" [ref=e233] [cursor=pointer]
+                    - columnheader "Bids ↕" [ref=e234] [cursor=pointer]
+                    - columnheader "Sold ↕" [ref=e235] [cursor=pointer]
+                    - columnheader "Binds ↕" [ref=e236] [cursor=pointer]
+                    - columnheader "WR ↕" [ref=e237] [cursor=pointer]
+                    - columnheader "CPC ↕" [ref=e238] [cursor=pointer]
+                    - columnheader "Current CPB ↕" [ref=e239] [cursor=pointer]
+                    - columnheader "Expected CPB ↕" [ref=e240] [cursor=pointer]
+                    - columnheader "WR Uplift ↕" [ref=e241] [cursor=pointer]
+                    - columnheader "CPC Uplift ↕" [ref=e242] [cursor=pointer]
+                    - columnheader "CPB Uplift ↕" [ref=e243] [cursor=pointer]
+                    - columnheader "Additional Clicks ↕" [ref=e244] [cursor=pointer]
+                    - columnheader "Additional Binds ↕" [ref=e245] [cursor=pointer]
+                    - columnheader "Additional Budget ↕" [ref=e246] [cursor=pointer]
+                    - columnheader "Stat-Sig ↕" [ref=e247] [cursor=pointer]
+                    - columnheader "Evidence ↕" [ref=e248] [cursor=pointer]
+                  - row [ref=e249]:
+                    - columnheader [ref=e250]:
+                      - textbox "Filter" [ref=e251]
+                    - columnheader [ref=e252]:
+                      - textbox "Filter" [ref=e253]
+                    - columnheader [ref=e254]:
+                      - textbox "Filter" [ref=e255]
+                    - columnheader [ref=e256]:
+                      - textbox "Filter" [ref=e257]
+                    - columnheader [ref=e258]:
+                      - textbox "Filter" [ref=e259]
+                    - columnheader [ref=e260]:
+                      - textbox "Filter" [ref=e261]
+                    - columnheader [ref=e262]:
+                      - textbox "Filter" [ref=e263]
+                    - columnheader [ref=e264]:
+                      - textbox "Filter" [ref=e265]
+                    - columnheader [ref=e266]:
+                      - textbox "Filter" [ref=e267]
+                    - columnheader [ref=e268]:
+                      - textbox "Filter" [ref=e269]
+                    - columnheader [ref=e270]:
+                      - textbox "Filter" [ref=e271]
+                    - columnheader [ref=e272]:
+                      - textbox "Filter" [ref=e273]
+                    - columnheader [ref=e274]:
+                      - textbox "Filter" [ref=e275]
+                    - columnheader [ref=e276]:
+                      - textbox "Filter" [ref=e277]
+                    - columnheader [ref=e278]:
+                      - textbox "Filter" [ref=e279]
+                    - columnheader [ref=e280]:
+                      - textbox "Filter" [ref=e281]
+                - rowgroup
+    - text: ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕

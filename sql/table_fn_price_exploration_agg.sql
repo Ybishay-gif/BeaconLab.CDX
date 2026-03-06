@@ -1,0 +1,147 @@
+CREATE OR REPLACE TABLE FUNCTION `crblx-beacon-prod.planning_app.fn_price_exploration_agg`(
+  start_date DATE,
+  end_date DATE
+)
+AS (
+  WITH base AS (
+    SELECT
+      ChannelGroupName AS channel_group_name,
+      Data_State AS state,
+      SAFE_CAST(PriceAdjustmentPercent AS INT64) AS price_adjustment_percent,
+      Lead_LeadID,
+      SAFE_CAST(bid_count AS FLOAT64) AS bid_count,
+      SAFE_CAST(ExtraBidData_ReturnedAdsCount AS FLOAT64) AS returned_ads_count,
+      SAFE_CAST(ExtraBidData_OriginalAdData_Position AS FLOAT64) AS ad_position,
+      SAFE_CAST(Transaction_sold AS FLOAT64) AS transaction_sold,
+      SAFE_CAST(TransactionSold AS FLOAT64) AS transaction_sold_alt,
+      SAFE_CAST(bid_price AS FLOAT64) AS bid_price,
+      SAFE_CAST(Price AS FLOAT64) AS price,
+      SAFE_CAST(AutoOnlineQuotesStart AS FLOAT64) AS quote_started,
+      SAFE_CAST(TotalQuotes AS FLOAT64) AS total_quotes
+    FROM `crblx-beacon-prod.Custom_Reports.Cross Tactic Analysis Full Data `
+    WHERE DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) BETWEEN start_date AND end_date
+      AND Data_State IS NOT NULL
+      AND ChannelGroupName IS NOT NULL
+      AND SAFE_CAST(PriceAdjustmentPercent AS INT64) IS NOT NULL
+  ),
+  state_tp AS (
+    SELECT
+      channel_group_name,
+      state,
+      price_adjustment_percent,
+      COUNT(DISTINCT Lead_LeadID) AS opps,
+      SUM(COALESCE(bid_count, 0)) AS bids,
+      SUM(COALESCE(returned_ads_count, 0)) AS total_impressions,
+      AVG(COALESCE(ad_position, 0)) AS avg_position,
+      SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)) AS sold,
+      SAFE_DIVIDE(SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)), NULLIF(SUM(COALESCE(bid_count, 0)), 0)) AS win_rate,
+      AVG(COALESCE(bid_price, 0)) AS avg_bid,
+      SAFE_DIVIDE(SUM(COALESCE(price, 0)), NULLIF(SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)), 0)) AS cpc,
+      SUM(COALESCE(price, 0)) AS total_spend,
+      SAFE_DIVIDE(SUM(COALESCE(total_quotes, 0)), NULLIF(SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)), 0)) AS click_to_quote,
+      SAFE_DIVIDE(SUM(COALESCE(quote_started, 0)), NULLIF(SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)), 0)) AS quote_start_rate,
+      SUM(COALESCE(quote_started, 0)) AS number_of_quote_started,
+      SUM(COALESCE(total_quotes, 0)) AS number_of_quotes
+    FROM base
+    GROUP BY 1, 2, 3
+  ),
+  channel_tp AS (
+    SELECT
+      channel_group_name,
+      price_adjustment_percent,
+      SUM(bids) AS channel_bids,
+      SUM(sold) AS channel_sold,
+      SAFE_DIVIDE(SUM(sold), NULLIF(SUM(bids), 0)) AS channel_win_rate,
+      SAFE_DIVIDE(SUM(total_spend), NULLIF(SUM(sold), 0)) AS channel_cpc
+    FROM state_tp
+    GROUP BY 1, 2
+  ),
+  joined AS (
+    SELECT
+      s.*,
+      b.win_rate AS baseline_win_rate,
+      b.cpc AS baseline_cpc,
+      b.bids AS baseline_bids,
+      b.sold AS baseline_sold,
+      c.channel_bids,
+      c.channel_sold,
+      c.channel_win_rate,
+      c.channel_cpc,
+      cb.channel_win_rate AS channel_baseline_win_rate,
+      cb.channel_cpc AS channel_baseline_cpc,
+      cb.channel_bids AS channel_baseline_bids,
+      cb.channel_sold AS channel_baseline_sold
+    FROM state_tp s
+    LEFT JOIN state_tp b
+      ON b.channel_group_name = s.channel_group_name
+     AND b.state = s.state
+     AND b.price_adjustment_percent = 0
+    LEFT JOIN channel_tp c
+      ON c.channel_group_name = s.channel_group_name
+     AND c.price_adjustment_percent = s.price_adjustment_percent
+    LEFT JOIN channel_tp cb
+      ON cb.channel_group_name = s.channel_group_name
+     AND cb.price_adjustment_percent = 0
+  ),
+  scored AS (
+    SELECT
+      *,
+      SAFE_DIVIDE(
+        win_rate - baseline_win_rate,
+        SQRT(
+          SAFE_DIVIDE((sold + baseline_sold), NULLIF((bids + baseline_bids), 0))
+          * (1 - SAFE_DIVIDE((sold + baseline_sold), NULLIF((bids + baseline_bids), 0)))
+          * (SAFE_DIVIDE(1, NULLIF(bids, 0)) + SAFE_DIVIDE(1, NULLIF(baseline_bids, 0)))
+        )
+      ) AS z_state,
+      SAFE_DIVIDE(
+        channel_win_rate - channel_baseline_win_rate,
+        SQRT(
+          SAFE_DIVIDE((channel_sold + channel_baseline_sold), NULLIF((channel_bids + channel_baseline_bids), 0))
+          * (1 - SAFE_DIVIDE((channel_sold + channel_baseline_sold), NULLIF((channel_bids + channel_baseline_bids), 0)))
+          * (SAFE_DIVIDE(1, NULLIF(channel_bids, 0)) + SAFE_DIVIDE(1, NULLIF(channel_baseline_bids, 0)))
+        )
+      ) AS z_channel
+    FROM joined
+  )
+  SELECT
+    start_date,
+    end_date,
+    channel_group_name,
+    state,
+    price_adjustment_percent,
+    opps,
+    bids,
+    total_impressions,
+    avg_position,
+    sold,
+    win_rate,
+    avg_bid,
+    cpc,
+    total_spend,
+    click_to_quote,
+    quote_start_rate,
+    number_of_quote_started,
+    number_of_quotes,
+    CASE
+      WHEN price_adjustment_percent = 0 THEN 'baseline'
+      WHEN ABS(z_state) >= 2.58 THEN 'high'
+      WHEN ABS(z_state) >= 1.96 THEN 'mid'
+      ELSE 'low'
+    END AS stat_sig,
+    CASE
+      WHEN price_adjustment_percent = 0 THEN 'baseline'
+      WHEN ABS(z_channel) >= 2.58 THEN 'high'
+      WHEN ABS(z_channel) >= 1.96 THEN 'mid'
+      ELSE 'low'
+    END AS stat_sig_channel_group,
+    CASE WHEN price_adjustment_percent = 0 THEN NULL ELSE SAFE_DIVIDE(cpc - baseline_cpc, NULLIF(baseline_cpc, 0)) END AS cpc_uplift,
+    CASE WHEN price_adjustment_percent = 0 THEN NULL ELSE SAFE_DIVIDE(channel_cpc - channel_baseline_cpc, NULLIF(channel_baseline_cpc, 0)) END AS cpc_uplift_channelgroup,
+    CASE WHEN price_adjustment_percent = 0 THEN NULL ELSE SAFE_DIVIDE(win_rate - baseline_win_rate, NULLIF(baseline_win_rate, 0)) END AS win_rate_uplift,
+    CASE WHEN price_adjustment_percent = 0 THEN NULL ELSE SAFE_DIVIDE(channel_win_rate - channel_baseline_win_rate, NULLIF(channel_baseline_win_rate, 0)) END AS win_rate_uplift_channelgroup,
+    CASE
+      WHEN price_adjustment_percent = 0 THEN NULL
+      ELSE ((CASE WHEN ABS(z_state) >= 1.96 THEN win_rate ELSE channel_win_rate END) - baseline_win_rate) * bids
+    END AS additional_clicks
+  FROM scored
+);

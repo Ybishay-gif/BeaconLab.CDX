@@ -1,0 +1,6 @@
+[   14769ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8080/api/plans/e9a2d745-c3f6-4d56-abb9-c5b0308639eb/decisions:0
+[   14769ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8080/api/plans/e9a2d745-c3f6-4d56-abb9-c5b0308639eb/parameters:0
+[   14771ms] TypeError: Failed to fetch
+    at api (http://localhost:8080/main.js?v=20260305-03:3458:23)
+    at loadPlanContextForSelectedPlan (http://localhost:8080/main.js?v=20260305-03:1983:22)
+    at HTMLInputElement.<anonymous> (http://localhost:8080/main.js?v=20260305-03:7697:11)

@@ -1,0 +1,18 @@
+import { Router } from "express";
+import { requireUser } from "../middleware/auth.js";
+import { analyticsRoutes } from "./api/analyticsRoutes.js";
+import { authRoutes } from "./api/authRoutes.js";
+import { changeLogRoutes } from "./api/changeLogRoutes.js";
+import { planRoutes } from "./api/planRoutes.js";
+import { targetsRoutes } from "./api/targetsRoutes.js";
+import { usersRoutes } from "./api/usersRoutes.js";
+
+export const plansRouter = Router();
+
+plansRouter.use(authRoutes);
+plansRouter.use(requireUser);
+plansRouter.use(planRoutes);
+plansRouter.use(analyticsRoutes);
+plansRouter.use(targetsRoutes);
+plansRouter.use(changeLogRoutes);
+plansRouter.use(usersRoutes);

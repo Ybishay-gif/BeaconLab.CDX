@@ -1,0 +1,115 @@
+- main [ref=e18]:
+  - complementary [ref=e19]:
+    - generic [ref=e20]:
+      - button "Collapse sidebar" [ref=e21] [cursor=pointer]:
+        - img [ref=e22]
+      - button "Sidebar pinned" [ref=e24] [cursor=pointer]:
+        - img [ref=e25]
+    - heading "Beacon Lab" [level=1] [ref=e27]
+    - generic [ref=e28]:
+      - generic [ref=e29]: Plan
+      - combobox "Plan" [ref=e30]:
+        - option "Select plan"
+        - option "PW Quickstart 20260305160722" [selected]
+        - option "Live Smoke Plan 2"
+        - option "Live Smoke Plan"
+      - generic [ref=e31]: Activity + Lead Type
+      - combobox "Activity + Lead Type" [ref=e32]:
+        - option "All" [selected]
+        - option "Clicks + Auto"
+        - option "Clicks + Home"
+        - option "Leads + Auto"
+        - option "Leads + Home"
+        - option "Calls + Auto"
+        - option "Calls + Home"
+    - navigation [ref=e33]:
+      - button "Plan" [ref=e34] [cursor=pointer]:
+        - img [ref=e36]
+        - generic [ref=e38]: Plan
+      - generic [ref=e39]:
+        - button "Plan Builder" [ref=e40] [cursor=pointer]:
+          - img [ref=e42]
+          - generic [ref=e44]: Plan Builder
+        - button "Targets" [ref=e45] [cursor=pointer]:
+          - img [ref=e47]
+          - generic [ref=e49]: Targets
+        - button "Plan Strategy" [ref=e50] [cursor=pointer]:
+          - img [ref=e52]
+          - generic [ref=e54]: Plan Strategy
+        - button "Price Exploration Decisions" [ref=e55] [cursor=pointer]:
+          - img [ref=e57]
+          - generic [ref=e59]: Price Exploration Decisions
+      - button "Analytics" [ref=e60] [cursor=pointer]:
+        - img [ref=e62]
+        - generic [ref=e64]: Analytics
+      - button "Settings" [ref=e65] [cursor=pointer]:
+        - img [ref=e67]
+        - generic [ref=e69]: Settings
+  - generic [ref=e70]:
+    - generic [ref=e71]:
+      - generic [ref=e73]:
+        - generic [ref=e74]:
+          - heading "Plans" [level=2] [ref=e75]
+          - generic [ref=e76]:
+            - button "Add Plan" [active] [ref=e77] [cursor=pointer]
+            - button "Refresh" [ref=e78] [cursor=pointer]
+        - table [ref=e80]:
+          - rowgroup [ref=e81]:
+            - row "Name Description Performance Date Range Price Exploration Date Range Created Actions" [ref=e82]:
+              - columnheader "Name" [ref=e83]
+              - columnheader "Description" [ref=e84]
+              - columnheader "Performance Date Range" [ref=e85]
+              - columnheader "Price Exploration Date Range" [ref=e86]
+              - columnheader "Created" [ref=e87]
+              - columnheader "Actions" [ref=e88]
+          - rowgroup [ref=e89]:
+            - row "Save Cancel" [ref=e121]:
+              - cell [ref=e122]:
+                - textbox [ref=e123]
+              - cell [ref=e124]:
+                - textbox [ref=e125]
+              - cell [ref=e126]:
+                - generic [ref=e127]:
+                  - textbox [ref=e128]
+                  - textbox [ref=e129]
+              - cell [ref=e130]:
+                - generic [ref=e131]:
+                  - textbox [ref=e132]
+                  - textbox [ref=e133]
+              - cell [ref=e134]
+              - cell "Save Cancel" [ref=e135]:
+                - button "Save" [ref=e136] [cursor=pointer]
+                - button "Cancel" [ref=e137] [cursor=pointer]
+            - row "PW Quickstart 20260305160722 Playwright automated quickstart flow - - 3/5/2026, 6:07:24 PM Edit Clone Delete" [ref=e138]:
+              - cell "PW Quickstart 20260305160722" [ref=e139]
+              - cell "Playwright automated quickstart flow" [ref=e140]
+              - cell "-" [ref=e141]
+              - cell "-" [ref=e142]
+              - cell "3/5/2026, 6:07:24 PM" [ref=e143]
+              - cell "Edit Clone Delete" [ref=e144]:
+                - button "Edit" [ref=e145] [cursor=pointer]
+                - button "Clone" [ref=e146] [cursor=pointer]
+                - button "Delete" [ref=e147] [cursor=pointer]
+            - row "Live Smoke Plan 2 created by codex - - 3/1/2026, 3:55:24 PM Edit Clone Delete" [ref=e148]:
+              - cell "Live Smoke Plan 2" [ref=e149]
+              - cell "created by codex" [ref=e150]
+              - cell "-" [ref=e151]
+              - cell "-" [ref=e152]
+              - cell "3/1/2026, 3:55:24 PM" [ref=e153]
+              - cell "Edit Clone Delete" [ref=e154]:
+                - button "Edit" [ref=e155] [cursor=pointer]
+                - button "Clone" [ref=e156] [cursor=pointer]
+                - button "Delete" [ref=e157] [cursor=pointer]
+            - row "Live Smoke Plan created by codex - - 3/1/2026, 3:54:35 PM Edit Clone Delete" [ref=e158]:
+              - cell "Live Smoke Plan" [ref=e159]
+              - cell "created by codex" [ref=e160]
+              - cell "-" [ref=e161]
+              - cell "-" [ref=e162]
+              - cell "3/1/2026, 3:54:35 PM" [ref=e163]
+              - cell "Edit Clone Delete" [ref=e164]:
+                - button "Edit" [ref=e165] [cursor=pointer]
+                - button "Clone" [ref=e166] [cursor=pointer]
+                - button "Delete" [ref=e167] [cursor=pointer]
+        - paragraph [ref=e120]: New row added. Fill details and click Save.
+      - text: ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕
+    - text: ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕

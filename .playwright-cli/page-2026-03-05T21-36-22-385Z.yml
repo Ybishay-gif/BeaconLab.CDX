@@ -1,0 +1,832 @@
+- main [ref=e18]:
+  - complementary [ref=e19]:
+    - generic [ref=e20]:
+      - button "Collapse sidebar" [ref=e21] [cursor=pointer]:
+        - img [ref=e22]
+      - button "Sidebar pinned" [ref=e24] [cursor=pointer]:
+        - img [ref=e25]
+    - heading "Beacon Lab" [level=1] [ref=e27]
+    - generic [ref=e28]:
+      - generic [ref=e29]: Plan
+      - combobox "Plan" [ref=e30]:
+        - option "Select plan"
+        - option "Jan plan (Clone)" [selected]
+        - option "Jan plan"
+        - option "Live Smoke Plan"
+      - generic [ref=e31]: Activity + Lead Type
+      - combobox "Activity + Lead Type" [ref=e32]:
+        - option "All" [selected]
+        - option "Clicks + Auto"
+        - option "Clicks + Home"
+        - option "Leads + Auto"
+        - option "Leads + Home"
+        - option "Calls + Auto"
+        - option "Calls + Home"
+    - navigation [ref=e33]:
+      - button "Plan" [ref=e34] [cursor=pointer]:
+        - img [ref=e36]
+        - generic [ref=e38]: Plan
+      - generic [ref=e39]:
+        - button "Plan Builder" [ref=e40] [cursor=pointer]:
+          - img [ref=e42]
+          - generic [ref=e44]: Plan Builder
+        - button "Targets" [ref=e45] [cursor=pointer]:
+          - img [ref=e47]
+          - generic [ref=e49]: Targets
+        - button "Plan Strategy" [ref=e50] [cursor=pointer]:
+          - img [ref=e52]
+          - generic [ref=e54]: Plan Strategy
+        - button "Price Exploration Decisions" [ref=e55] [cursor=pointer]:
+          - img [ref=e57]
+          - generic [ref=e59]: Price Exploration Decisions
+      - button "Analytics" [ref=e60] [cursor=pointer]:
+        - img [ref=e62]
+        - generic [ref=e64]: Analytics
+      - button "Settings" [ref=e65] [cursor=pointer]:
+        - img [ref=e67]
+        - generic [ref=e69]: Settings
+  - generic [ref=e70]:
+    - generic [ref=e71]:
+      - text: ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕
+      - generic [ref=e147]:
+        - generic [ref=e148]:
+          - heading "Price Exploration Decisions" [level=2] [ref=e149]
+          - generic [ref=e151]:
+            - generic [ref=e152]: Date Range
+            - textbox "Price exploration decisions date range" [ref=e153] [cursor=pointer]:
+              - /placeholder: Select date range
+              - text: 2026-02-01 to 2026-02-09
+            - generic [ref=e154]:
+              - button "This Month" [ref=e155] [cursor=pointer]
+              - button "Last Month" [ref=e156] [cursor=pointer]
+              - button "Last 14 Days" [ref=e157] [cursor=pointer]
+              - button "Last 30 Days" [ref=e158] [cursor=pointer]
+        - generic [ref=e159]:
+          - generic [ref=e160]:
+            - generic [ref=e161]: Filter by State (multi-select)
+            - button "All states" [ref=e163] [cursor=pointer]
+          - generic [ref=e164]:
+            - generic [ref=e165]: Filter by Channel Group (multi-select)
+            - button "All channel groups" [ref=e167] [cursor=pointer]
+          - generic [ref=e168]:
+            - generic [ref=e169]: Filter by Segment (multi-select)
+            - generic [ref=e170]:
+              - button "All segments" [active] [ref=e171] [cursor=pointer]
+              - generic [ref=e959]:
+                - generic [ref=e960]:
+                  - checkbox "MCH" [ref=e961]
+                  - generic [ref=e962]: MCH
+                - generic [ref=e963]:
+                  - checkbox "MCR" [ref=e964]
+                  - generic [ref=e965]: MCR
+                - generic [ref=e966]:
+                  - checkbox "SCH" [ref=e967]
+                  - generic [ref=e968]: SCH
+                - generic [ref=e969]:
+                  - checkbox "SCR" [ref=e970]
+                  - generic [ref=e971]: SCR
+        - generic [ref=e172]:
+          - button "Apply Filters" [ref=e173] [cursor=pointer]
+          - button "Clear Filters" [ref=e174] [cursor=pointer]
+        - paragraph [ref=e282]: "Loaded 5000 row(s) across 100 state/channel pair(s). Plan impact (selected TPs): +5,641 clicks | +171 binds | $54,306 budget. Showing top 100 pairs by recommended additional binds."
+        - generic [ref=e175]:
+          - complementary [ref=e176]:
+            - heading "State & Channel Pairs" [level=3] [ref=e177]
+            - generic [ref=e283]:
+              - 'button "NC • 125 MCH Bids: 9 | Sold: 4 | Binds: 10 Recommended: +15% Testing: -10% | 0.0% | +10% | +15% | +20%" [ref=e289] [cursor=pointer]':
+                - heading "NC • 125 MCH" [level=4] [ref=e290]
+                - paragraph [ref=e291]: "Bids: 9 | Sold: 4 | Binds: 10"
+                - paragraph [ref=e292]: "Recommended: +15%"
+                - paragraph [ref=e293]: "Testing: -10% | 0.0% | +10% | +15% | +20%"
+              - 'button "VA • 140 MCH Bids: 223 | Sold: 7 | Binds: 15 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e294] [cursor=pointer]':
+                - heading "VA • 140 MCH" [level=4] [ref=e295]
+                - paragraph [ref=e296]: "Bids: 223 | Sold: 7 | Binds: 15"
+                - paragraph [ref=e297]: "Recommended: +20%"
+                - paragraph [ref=e298]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MD • 140 MCH Bids: 104 | Sold: 5 | Binds: 4 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e299] [cursor=pointer]':
+                - heading "MD • 140 MCH" [level=4] [ref=e300]
+                - paragraph [ref=e301]: "Bids: 104 | Sold: 5 | Binds: 4"
+                - paragraph [ref=e302]: "Recommended: +10%"
+                - paragraph [ref=e303]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MS • 140 MCH Bids: 117 | Sold: 6 | Binds: 2 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e304] [cursor=pointer]':
+                - heading "MS • 140 MCH" [level=4] [ref=e305]
+                - paragraph [ref=e306]: "Bids: 117 | Sold: 6 | Binds: 2"
+                - paragraph [ref=e307]: "Recommended: +20%"
+                - paragraph [ref=e308]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MA • 125 SCR Bids: 174 | Sold: 8 | Binds: 4 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e309] [cursor=pointer]':
+                - heading "MA • 125 SCR" [level=4] [ref=e310]
+                - paragraph [ref=e311]: "Bids: 174 | Sold: 8 | Binds: 4"
+                - paragraph [ref=e312]: "Recommended: +10%"
+                - paragraph [ref=e313]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "OH • 125 MCH Bids: 451 | Sold: 13 | Binds: 2 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e314] [cursor=pointer]':
+                - heading "OH • 125 MCH" [level=4] [ref=e315]
+                - paragraph [ref=e316]: "Bids: 451 | Sold: 13 | Binds: 2"
+                - paragraph [ref=e317]: "Recommended: +20%"
+                - paragraph [ref=e318]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "OH • 140 MCH Bids: 832 | Sold: 6 | Binds: 8 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e319] [cursor=pointer]':
+                - heading "OH • 140 MCH" [level=4] [ref=e320]
+                - paragraph [ref=e321]: "Bids: 832 | Sold: 6 | Binds: 8"
+                - paragraph [ref=e322]: "Recommended: -10%"
+                - paragraph [ref=e323]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "SC • 125 MCH Bids: 297 | Sold: 11 | Binds: 4 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e324] [cursor=pointer]':
+                - heading "SC • 125 MCH" [level=4] [ref=e325]
+                - paragraph [ref=e326]: "Bids: 297 | Sold: 11 | Binds: 4"
+                - paragraph [ref=e327]: "Recommended: +10%"
+                - paragraph [ref=e328]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MI • 125 SCR Bids: 446 | Sold: 12 | Binds: 1 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e329] [cursor=pointer]':
+                - heading "MI • 125 SCR" [level=4] [ref=e330]
+                - paragraph [ref=e331]: "Bids: 446 | Sold: 12 | Binds: 1"
+                - paragraph [ref=e332]: "Recommended: +10%"
+                - paragraph [ref=e333]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "TX • 140 SCH Bids: 63 | Sold: 8 | Binds: 4 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e334] [cursor=pointer]':
+                - heading "TX • 140 SCH" [level=4] [ref=e335]
+                - paragraph [ref=e336]: "Bids: 63 | Sold: 8 | Binds: 4"
+                - paragraph [ref=e337]: "Recommended: +10%"
+                - paragraph [ref=e338]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "GA • 155 MCH Bids: 280 | Sold: 3 | Binds: 2 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e339] [cursor=pointer]':
+                - heading "GA • 155 MCH" [level=4] [ref=e340]
+                - paragraph [ref=e341]: "Bids: 280 | Sold: 3 | Binds: 2"
+                - paragraph [ref=e342]: "Recommended: +20%"
+                - paragraph [ref=e343]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "TX • 125 SCH Bids: 2,430 | Sold: 32 | Binds: 5 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e344] [cursor=pointer]':
+                - heading "TX • 125 SCH" [level=4] [ref=e345]
+                - paragraph [ref=e346]: "Bids: 2,430 | Sold: 32 | Binds: 5"
+                - paragraph [ref=e347]: "Recommended: +10%"
+                - paragraph [ref=e348]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "PA • 125 MCH Bids: 367 | Sold: 13 | Binds: 3 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e349] [cursor=pointer]':
+                - heading "PA • 125 MCH" [level=4] [ref=e350]
+                - paragraph [ref=e351]: "Bids: 367 | Sold: 13 | Binds: 3"
+                - paragraph [ref=e352]: "Recommended: +20%"
+                - paragraph [ref=e353]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "VA • 125 MCH Bids: 101 | Sold: 10 | Binds: 6 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e354] [cursor=pointer]':
+                - heading "VA • 125 MCH" [level=4] [ref=e355]
+                - paragraph [ref=e356]: "Bids: 101 | Sold: 10 | Binds: 6"
+                - paragraph [ref=e357]: "Recommended: +10%"
+                - paragraph [ref=e358]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MO • 140 MCH Bids: 228 | Sold: 4 | Binds: 3 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e359] [cursor=pointer]':
+                - heading "MO • 140 MCH" [level=4] [ref=e360]
+                - paragraph [ref=e361]: "Bids: 228 | Sold: 4 | Binds: 3"
+                - paragraph [ref=e362]: "Recommended: +20%"
+                - paragraph [ref=e363]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "KY • 125 MCH Bids: 66 | Sold: 7 | Binds: 6 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e364] [cursor=pointer]':
+                - heading "KY • 125 MCH" [level=4] [ref=e365]
+                - paragraph [ref=e366]: "Bids: 66 | Sold: 7 | Binds: 6"
+                - paragraph [ref=e367]: "Recommended: +20%"
+                - paragraph [ref=e368]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "GA • 165 MCH Bids: 25 | Sold: 7 | Binds: 1 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e369] [cursor=pointer]':
+                - heading "GA • 165 MCH" [level=4] [ref=e370]
+                - paragraph [ref=e371]: "Bids: 25 | Sold: 7 | Binds: 1"
+                - paragraph [ref=e372]: "Recommended: +10%"
+                - paragraph [ref=e373]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "NJ • 110 MCH Bids: 59 | Sold: 26 | Binds: 12 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e374] [cursor=pointer]':
+                - heading "NJ • 110 MCH" [level=4] [ref=e375]
+                - paragraph [ref=e376]: "Bids: 59 | Sold: 26 | Binds: 12"
+                - paragraph [ref=e377]: "Recommended: -10%"
+                - paragraph [ref=e378]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "NV • 125 MCH Bids: 58 | Sold: 6 | Binds: 2 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e379] [cursor=pointer]':
+                - heading "NV • 125 MCH" [level=4] [ref=e380]
+                - paragraph [ref=e381]: "Bids: 58 | Sold: 6 | Binds: 2"
+                - paragraph [ref=e382]: "Recommended: +10%"
+                - paragraph [ref=e383]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "KY • 100 MCR Bids: 56 | Sold: 4 | Binds: 2 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e384] [cursor=pointer]':
+                - heading "KY • 100 MCR" [level=4] [ref=e385]
+                - paragraph [ref=e386]: "Bids: 56 | Sold: 4 | Binds: 2"
+                - paragraph [ref=e387]: "Recommended: +10%"
+                - paragraph [ref=e388]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "VA • 125 SCH Bids: 733 | Sold: 13 | Binds: 6 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e389] [cursor=pointer]':
+                - heading "VA • 125 SCH" [level=4] [ref=e390]
+                - paragraph [ref=e391]: "Bids: 733 | Sold: 13 | Binds: 6"
+                - paragraph [ref=e392]: "Recommended: -10%"
+                - paragraph [ref=e393]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "PA • 100 SCR Bids: 984 | Sold: 29 | Binds: 3 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e394] [cursor=pointer]':
+                - heading "PA • 100 SCR" [level=4] [ref=e395]
+                - paragraph [ref=e396]: "Bids: 984 | Sold: 29 | Binds: 3"
+                - paragraph [ref=e397]: "Recommended: +20%"
+                - paragraph [ref=e398]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "FL • 150 MCH Bids: 12 | Sold: 9 | Binds: 2 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e399] [cursor=pointer]':
+                - heading "FL • 150 MCH" [level=4] [ref=e400]
+                - paragraph [ref=e401]: "Bids: 12 | Sold: 9 | Binds: 2"
+                - paragraph [ref=e402]: "Recommended: +20%"
+                - paragraph [ref=e403]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "AZ • 100 SCH Bids: 148 | Sold: 16 | Binds: 2 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e404] [cursor=pointer]':
+                - heading "AZ • 100 SCH" [level=4] [ref=e405]
+                - paragraph [ref=e406]: "Bids: 148 | Sold: 16 | Binds: 2"
+                - paragraph [ref=e407]: "Recommended: +20%"
+                - paragraph [ref=e408]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "OK • 150 MCR Bids: 1 | Sold: 1 | Binds: 2 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e409] [cursor=pointer]':
+                - heading "OK • 150 MCR" [level=4] [ref=e410]
+                - paragraph [ref=e411]: "Bids: 1 | Sold: 1 | Binds: 2"
+                - paragraph [ref=e412]: "Recommended: -10%"
+                - paragraph [ref=e413]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "TX • 110 MCH Bids: 310 | Sold: 13 | Binds: 2 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e414] [cursor=pointer]':
+                - heading "TX • 110 MCH" [level=4] [ref=e415]
+                - paragraph [ref=e416]: "Bids: 310 | Sold: 13 | Binds: 2"
+                - paragraph [ref=e417]: "Recommended: +10%"
+                - paragraph [ref=e418]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "VA • 100 SCH Bids: 119 | Sold: 16 | Binds: 11 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e419] [cursor=pointer]':
+                - heading "VA • 100 SCH" [level=4] [ref=e420]
+                - paragraph [ref=e421]: "Bids: 119 | Sold: 16 | Binds: 11"
+                - paragraph [ref=e422]: "Recommended: +10%"
+                - paragraph [ref=e423]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "GA • 125 MCH Bids: 441 | Sold: 12 | Binds: 5 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e424] [cursor=pointer]':
+                - heading "GA • 125 MCH" [level=4] [ref=e425]
+                - paragraph [ref=e426]: "Bids: 441 | Sold: 12 | Binds: 5"
+                - paragraph [ref=e427]: "Recommended: +10%"
+                - paragraph [ref=e428]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "KY • 140 MCH Bids: 273 | Sold: 5 | Binds: 4 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e429] [cursor=pointer]':
+                - heading "KY • 140 MCH" [level=4] [ref=e430]
+                - paragraph [ref=e431]: "Bids: 273 | Sold: 5 | Binds: 4"
+                - paragraph [ref=e432]: "Recommended: -10%"
+                - paragraph [ref=e433]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "FL • 150 MCR Bids: 17 | Sold: 8 | Binds: 4 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e434] [cursor=pointer]':
+                - heading "FL • 150 MCR" [level=4] [ref=e435]
+                - paragraph [ref=e436]: "Bids: 17 | Sold: 8 | Binds: 4"
+                - paragraph [ref=e437]: "Recommended: -10%"
+                - paragraph [ref=e438]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "GA • 125 MCR Bids: 163 | Sold: 10 | Binds: 2 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e439] [cursor=pointer]':
+                - heading "GA • 125 MCR" [level=4] [ref=e440]
+                - paragraph [ref=e441]: "Bids: 163 | Sold: 10 | Binds: 2"
+                - paragraph [ref=e442]: "Recommended: +10%"
+                - paragraph [ref=e443]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "TX • 165 MCH Bids: 124 | Sold: 35 | Binds: 2 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e444] [cursor=pointer]':
+                - heading "TX • 165 MCH" [level=4] [ref=e445]
+                - paragraph [ref=e446]: "Bids: 124 | Sold: 35 | Binds: 2"
+                - paragraph [ref=e447]: "Recommended: +10%"
+                - paragraph [ref=e448]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "VA • 110 MCH Bids: 72 | Sold: 18 | Binds: 3 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e449] [cursor=pointer]':
+                - heading "VA • 110 MCH" [level=4] [ref=e450]
+                - paragraph [ref=e451]: "Bids: 72 | Sold: 18 | Binds: 3"
+                - paragraph [ref=e452]: "Recommended: +20%"
+                - paragraph [ref=e453]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "FL • 100 SCH Bids: 470 | Sold: 31 | Binds: 6 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e454] [cursor=pointer]':
+                - heading "FL • 100 SCH" [level=4] [ref=e455]
+                - paragraph [ref=e456]: "Bids: 470 | Sold: 31 | Binds: 6"
+                - paragraph [ref=e457]: "Recommended: +10%"
+                - paragraph [ref=e458]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "WV • 125 MCH Bids: 94 | Sold: 5 | Binds: 5 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e459] [cursor=pointer]':
+                - heading "WV • 125 MCH" [level=4] [ref=e460]
+                - paragraph [ref=e461]: "Bids: 94 | Sold: 5 | Binds: 5"
+                - paragraph [ref=e462]: "Recommended: +20%"
+                - paragraph [ref=e463]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MA • 110 MCH Bids: 31 | Sold: 17 | Binds: 16 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e464] [cursor=pointer]':
+                - heading "MA • 110 MCH" [level=4] [ref=e465]
+                - paragraph [ref=e466]: "Bids: 31 | Sold: 17 | Binds: 16"
+                - paragraph [ref=e467]: "Recommended: -10%"
+                - paragraph [ref=e468]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "NM • 100 SCH Bids: 38 | Sold: 7 | Binds: 1 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e469] [cursor=pointer]':
+                - heading "NM • 100 SCH" [level=4] [ref=e470]
+                - paragraph [ref=e471]: "Bids: 38 | Sold: 7 | Binds: 1"
+                - paragraph [ref=e472]: "Recommended: +10%"
+                - paragraph [ref=e473]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "NC • 125 SCH Bids: 564 | Sold: 7 | Binds: 8 Recommended: -10% Testing: -10% | 0.0% | +10% | +15% | +20%" [ref=e474] [cursor=pointer]':
+                - heading "NC • 125 SCH" [level=4] [ref=e475]
+                - paragraph [ref=e476]: "Bids: 564 | Sold: 7 | Binds: 8"
+                - paragraph [ref=e477]: "Recommended: -10%"
+                - paragraph [ref=e478]: "Testing: -10% | 0.0% | +10% | +15% | +20%"
+              - 'button "OH • 125 SCH Bids: 599 | Sold: 10 | Binds: 4 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e479] [cursor=pointer]':
+                - heading "OH • 125 SCH" [level=4] [ref=e480]
+                - paragraph [ref=e481]: "Bids: 599 | Sold: 10 | Binds: 4"
+                - paragraph [ref=e482]: "Recommended: +10%"
+                - paragraph [ref=e483]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MA • 100 MCR Bids: 30 | Sold: 18 | Binds: 4 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e484] [cursor=pointer]':
+                - heading "MA • 100 MCR" [level=4] [ref=e485]
+                - paragraph [ref=e486]: "Bids: 30 | Sold: 18 | Binds: 4"
+                - paragraph [ref=e487]: "Recommended: +10%"
+                - paragraph [ref=e488]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "IL • 150 SCH Bids: 21 | Sold: 8 | Binds: 2 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e489] [cursor=pointer]':
+                - heading "IL • 150 SCH" [level=4] [ref=e490]
+                - paragraph [ref=e491]: "Bids: 21 | Sold: 8 | Binds: 2"
+                - paragraph [ref=e492]: "Recommended: -10%"
+                - paragraph [ref=e493]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MI • 140 MCH Bids: 200 | Sold: 3 | Binds: 6 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e494] [cursor=pointer]':
+                - heading "MI • 140 MCH" [level=4] [ref=e495]
+                - paragraph [ref=e496]: "Bids: 200 | Sold: 3 | Binds: 6"
+                - paragraph [ref=e497]: "Recommended: +20%"
+                - paragraph [ref=e498]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "AZ • 125 SCH Bids: 555 | Sold: 12 | Binds: 1 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e499] [cursor=pointer]':
+                - heading "AZ • 125 SCH" [level=4] [ref=e500]
+                - paragraph [ref=e501]: "Bids: 555 | Sold: 12 | Binds: 1"
+                - paragraph [ref=e502]: "Recommended: +20%"
+                - paragraph [ref=e503]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "AZ • 165 MCH Bids: 12 | Sold: 5 | Binds: 8 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e504] [cursor=pointer]':
+                - heading "AZ • 165 MCH" [level=4] [ref=e505]
+                - paragraph [ref=e506]: "Bids: 12 | Sold: 5 | Binds: 8"
+                - paragraph [ref=e507]: "Recommended: -10%"
+                - paragraph [ref=e508]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "TX • 155 MCH Bids: 457 | Sold: 5 | Binds: 4 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e509] [cursor=pointer]':
+                - heading "TX • 155 MCH" [level=4] [ref=e510]
+                - paragraph [ref=e511]: "Bids: 457 | Sold: 5 | Binds: 4"
+                - paragraph [ref=e512]: "Recommended: +10%"
+                - paragraph [ref=e513]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "UT • 165 MCH Bids: 8 | Sold: 3 | Binds: 2 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e514] [cursor=pointer]':
+                - heading "UT • 165 MCH" [level=4] [ref=e515]
+                - paragraph [ref=e516]: "Bids: 8 | Sold: 3 | Binds: 2"
+                - paragraph [ref=e517]: "Recommended: -10%"
+                - paragraph [ref=e518]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "IL • 150 MCH Bids: 11 | Sold: 8 | Binds: 2 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e519] [cursor=pointer]':
+                - heading "IL • 150 MCH" [level=4] [ref=e520]
+                - paragraph [ref=e521]: "Bids: 11 | Sold: 8 | Binds: 2"
+                - paragraph [ref=e522]: "Recommended: +20%"
+                - paragraph [ref=e523]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "ID • 125 MCR Bids: 12 | Sold: 3 | Binds: 6 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e524] [cursor=pointer]':
+                - heading "ID • 125 MCR" [level=4] [ref=e525]
+                - paragraph [ref=e526]: "Bids: 12 | Sold: 3 | Binds: 6"
+                - paragraph [ref=e527]: "Recommended: +10%"
+                - paragraph [ref=e528]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "KY • 125 MCR Bids: 104 | Sold: 9 | Binds: 2 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e529] [cursor=pointer]':
+                - heading "KY • 125 MCR" [level=4] [ref=e530]
+                - paragraph [ref=e531]: "Bids: 104 | Sold: 9 | Binds: 2"
+                - paragraph [ref=e532]: "Recommended: +10%"
+                - paragraph [ref=e533]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "OR • 100 MCH Bids: 50 | Sold: 5 | Binds: 3 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e534] [cursor=pointer]':
+                - heading "OR • 100 MCH" [level=4] [ref=e535]
+                - paragraph [ref=e536]: "Bids: 50 | Sold: 5 | Binds: 3"
+                - paragraph [ref=e537]: "Recommended: +10%"
+                - paragraph [ref=e538]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "GA • 125 SCH Bids: 971 | Sold: 7 | Binds: 4 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e539] [cursor=pointer]':
+                - heading "GA • 125 SCH" [level=4] [ref=e540]
+                - paragraph [ref=e541]: "Bids: 971 | Sold: 7 | Binds: 4"
+                - paragraph [ref=e542]: "Recommended: -10%"
+                - paragraph [ref=e543]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "NV • 125 SCH Bids: 314 | Sold: 8 | Binds: 2 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e544] [cursor=pointer]':
+                - heading "NV • 125 SCH" [level=4] [ref=e545]
+                - paragraph [ref=e546]: "Bids: 314 | Sold: 8 | Binds: 2"
+                - paragraph [ref=e547]: "Recommended: +10%"
+                - paragraph [ref=e548]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MI • 100 SCH Bids: 203 | Sold: 29 | Binds: 16 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e549] [cursor=pointer]':
+                - heading "MI • 100 SCH" [level=4] [ref=e550]
+                - paragraph [ref=e551]: "Bids: 203 | Sold: 29 | Binds: 16"
+                - paragraph [ref=e552]: "Recommended: -10%"
+                - paragraph [ref=e553]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "IL • 125 SCH Bids: 599 | Sold: 11 | Binds: 2 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e554] [cursor=pointer]':
+                - heading "IL • 125 SCH" [level=4] [ref=e555]
+                - paragraph [ref=e556]: "Bids: 599 | Sold: 11 | Binds: 2"
+                - paragraph [ref=e557]: "Recommended: +10%"
+                - paragraph [ref=e558]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "VA • 100 MCR Bids: 93 | Sold: 13 | Binds: 2 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e559] [cursor=pointer]':
+                - heading "VA • 100 MCR" [level=4] [ref=e560]
+                - paragraph [ref=e561]: "Bids: 93 | Sold: 13 | Binds: 2"
+                - paragraph [ref=e562]: "Recommended: -10%"
+                - paragraph [ref=e563]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "FL • 165 MCH Bids: 48 | Sold: 18 | Binds: 9 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e564] [cursor=pointer]':
+                - heading "FL • 165 MCH" [level=4] [ref=e565]
+                - paragraph [ref=e566]: "Bids: 48 | Sold: 18 | Binds: 9"
+                - paragraph [ref=e567]: "Recommended: -10%"
+                - paragraph [ref=e568]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "TN • 150 MCH Bids: 9 | Sold: 6 | Binds: 2 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e569] [cursor=pointer]':
+                - heading "TN • 150 MCH" [level=4] [ref=e570]
+                - paragraph [ref=e571]: "Bids: 9 | Sold: 6 | Binds: 2"
+                - paragraph [ref=e572]: "Recommended: +20%"
+                - paragraph [ref=e573]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "PA • 150 MCH Bids: 18 | Sold: 12 | Binds: 2 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e574] [cursor=pointer]':
+                - heading "PA • 150 MCH" [level=4] [ref=e575]
+                - paragraph [ref=e576]: "Bids: 18 | Sold: 12 | Binds: 2"
+                - paragraph [ref=e577]: "Recommended: +20%"
+                - paragraph [ref=e578]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "AZ • 150 MCR Bids: 7 | Sold: 3 | Binds: 1 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e579] [cursor=pointer]':
+                - heading "AZ • 150 MCR" [level=4] [ref=e580]
+                - paragraph [ref=e581]: "Bids: 7 | Sold: 3 | Binds: 1"
+                - paragraph [ref=e582]: "Recommended: -10%"
+                - paragraph [ref=e583]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "TN • 125 SCH Bids: 463 | Sold: 5 | Binds: 6 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e584] [cursor=pointer]':
+                - heading "TN • 125 SCH" [level=4] [ref=e585]
+                - paragraph [ref=e586]: "Bids: 463 | Sold: 5 | Binds: 6"
+                - paragraph [ref=e587]: "Recommended: -10%"
+                - paragraph [ref=e588]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "WA • 100 MCH Bids: 442 | Sold: 18 | Binds: 6 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e589] [cursor=pointer]':
+                - heading "WA • 100 MCH" [level=4] [ref=e590]
+                - paragraph [ref=e591]: "Bids: 442 | Sold: 18 | Binds: 6"
+                - paragraph [ref=e592]: "Recommended: +10%"
+                - paragraph [ref=e593]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "PA • 165 MCH Bids: 23 | Sold: 6 | Binds: 4 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e594] [cursor=pointer]':
+                - heading "PA • 165 MCH" [level=4] [ref=e595]
+                - paragraph [ref=e596]: "Bids: 23 | Sold: 6 | Binds: 4"
+                - paragraph [ref=e597]: "Recommended: +10%"
+                - paragraph [ref=e598]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "NC • 165 SCH Bids: 18 | Sold: 5 | Binds: 2 Recommended: +10% Testing: -10% | 0.0% | +10% | +15%" [ref=e599] [cursor=pointer]':
+                - heading "NC • 165 SCH" [level=4] [ref=e600]
+                - paragraph [ref=e601]: "Bids: 18 | Sold: 5 | Binds: 2"
+                - paragraph [ref=e602]: "Recommended: +10%"
+                - paragraph [ref=e603]: "Testing: -10% | 0.0% | +10% | +15%"
+              - 'button "AL • 165 MCH Bids: 18 | Sold: 7 | Binds: 2 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e604] [cursor=pointer]':
+                - heading "AL • 165 MCH" [level=4] [ref=e605]
+                - paragraph [ref=e606]: "Bids: 18 | Sold: 7 | Binds: 2"
+                - paragraph [ref=e607]: "Recommended: -10%"
+                - paragraph [ref=e608]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MA • 125 MCH Bids: 13 | Sold: 5 | Binds: 12 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e609] [cursor=pointer]':
+                - heading "MA • 125 MCH" [level=4] [ref=e610]
+                - paragraph [ref=e611]: "Bids: 13 | Sold: 5 | Binds: 12"
+                - paragraph [ref=e612]: "Recommended: -10%"
+                - paragraph [ref=e613]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "AL • 100 MCH Bids: 171 | Sold: 10 | Binds: 4 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e614] [cursor=pointer]':
+                - heading "AL • 100 MCH" [level=4] [ref=e615]
+                - paragraph [ref=e616]: "Bids: 171 | Sold: 10 | Binds: 4"
+                - paragraph [ref=e617]: "Recommended: +20%"
+                - paragraph [ref=e618]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MS • 125 SCH Bids: 133 | Sold: 4 | Binds: 2 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e619] [cursor=pointer]':
+                - heading "MS • 125 SCH" [level=4] [ref=e620]
+                - paragraph [ref=e621]: "Bids: 133 | Sold: 4 | Binds: 2"
+                - paragraph [ref=e622]: "Recommended: -10%"
+                - paragraph [ref=e623]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "OK • 125 MCH Bids: 38 | Sold: 6 | Binds: 4 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e624] [cursor=pointer]':
+                - heading "OK • 125 MCH" [level=4] [ref=e625]
+                - paragraph [ref=e626]: "Bids: 38 | Sold: 6 | Binds: 4"
+                - paragraph [ref=e627]: "Recommended: -10%"
+                - paragraph [ref=e628]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MI • 150 SCH Bids: 20 | Sold: 5 | Binds: 2 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e629] [cursor=pointer]':
+                - heading "MI • 150 SCH" [level=4] [ref=e630]
+                - paragraph [ref=e631]: "Bids: 20 | Sold: 5 | Binds: 2"
+                - paragraph [ref=e632]: "Recommended: +10%"
+                - paragraph [ref=e633]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "VA • 150 MCR Bids: 13 | Sold: 5 | Binds: 1 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e634] [cursor=pointer]':
+                - heading "VA • 150 MCR" [level=4] [ref=e635]
+                - paragraph [ref=e636]: "Bids: 13 | Sold: 5 | Binds: 1"
+                - paragraph [ref=e637]: "Recommended: +20%"
+                - paragraph [ref=e638]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "WA • 100 MCR Bids: 84 | Sold: 6 | Binds: 2 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e639] [cursor=pointer]':
+                - heading "WA • 100 MCR" [level=4] [ref=e640]
+                - paragraph [ref=e641]: "Bids: 84 | Sold: 6 | Binds: 2"
+                - paragraph [ref=e642]: "Recommended: -10%"
+                - paragraph [ref=e643]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "VT • 100 MCH Bids: 5 | Sold: 1 | Binds: 6 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e644] [cursor=pointer]':
+                - heading "VT • 100 MCH" [level=4] [ref=e645]
+                - paragraph [ref=e646]: "Bids: 5 | Sold: 1 | Binds: 6"
+                - paragraph [ref=e647]: "Recommended: +20%"
+                - paragraph [ref=e648]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "PA • 110 MCH Bids: 84 | Sold: 8 | Binds: 4 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e649] [cursor=pointer]':
+                - heading "PA • 110 MCH" [level=4] [ref=e650]
+                - paragraph [ref=e651]: "Bids: 84 | Sold: 8 | Binds: 4"
+                - paragraph [ref=e652]: "Recommended: +10%"
+                - paragraph [ref=e653]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "TN • 150 SCH Bids: 23 | Sold: 4 | Binds: 2 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e654] [cursor=pointer]':
+                - heading "TN • 150 SCH" [level=4] [ref=e655]
+                - paragraph [ref=e656]: "Bids: 23 | Sold: 4 | Binds: 2"
+                - paragraph [ref=e657]: "Recommended: -10%"
+                - paragraph [ref=e658]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "AR • 100 SCH Bids: 80 | Sold: 3 | Binds: 2 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e659] [cursor=pointer]':
+                - heading "AR • 100 SCH" [level=4] [ref=e660]
+                - paragraph [ref=e661]: "Bids: 80 | Sold: 3 | Binds: 2"
+                - paragraph [ref=e662]: "Recommended: +10%"
+                - paragraph [ref=e663]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MI • 110 MCH Bids: 128 | Sold: 20 | Binds: 8 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e664] [cursor=pointer]':
+                - heading "MI • 110 MCH" [level=4] [ref=e665]
+                - paragraph [ref=e666]: "Bids: 128 | Sold: 20 | Binds: 8"
+                - paragraph [ref=e667]: "Recommended: +10%"
+                - paragraph [ref=e668]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "IL • 165 MCH Bids: 19 | Sold: 6 | Binds: 8 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e669] [cursor=pointer]':
+                - heading "IL • 165 MCH" [level=4] [ref=e670]
+                - paragraph [ref=e671]: "Bids: 19 | Sold: 6 | Binds: 8"
+                - paragraph [ref=e672]: "Recommended: +20%"
+                - paragraph [ref=e673]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "NC • 150 MCH Bids: 9 | Sold: 6 | Binds: 2 Recommended: +15% Testing: -10% | 0.0% | +10% | +15%" [ref=e674] [cursor=pointer]':
+                - heading "NC • 150 MCH" [level=4] [ref=e675]
+                - paragraph [ref=e676]: "Bids: 9 | Sold: 6 | Binds: 2"
+                - paragraph [ref=e677]: "Recommended: +15%"
+                - paragraph [ref=e678]: "Testing: -10% | 0.0% | +10% | +15%"
+              - 'button "ID • 100 SCH Bids: 25 | Sold: 4 | Binds: 2 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e679] [cursor=pointer]':
+                - heading "ID • 100 SCH" [level=4] [ref=e680]
+                - paragraph [ref=e681]: "Bids: 25 | Sold: 4 | Binds: 2"
+                - paragraph [ref=e682]: "Recommended: +10%"
+                - paragraph [ref=e683]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "NM • 125 SCH Bids: 190 | Sold: 3 | Binds: 1 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e684] [cursor=pointer]':
+                - heading "NM • 125 SCH" [level=4] [ref=e685]
+                - paragraph [ref=e686]: "Bids: 190 | Sold: 3 | Binds: 1"
+                - paragraph [ref=e687]: "Recommended: +20%"
+                - paragraph [ref=e688]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "NM • 110 MCH Bids: 21 | Sold: 4 | Binds: 4 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e689] [cursor=pointer]':
+                - heading "NM • 110 MCH" [level=4] [ref=e690]
+                - paragraph [ref=e691]: "Bids: 21 | Sold: 4 | Binds: 4"
+                - paragraph [ref=e692]: "Recommended: -10%"
+                - paragraph [ref=e693]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MI • 150 SCR Bids: 4 | Sold: 3 | Binds: 3 Recommended: -10% Testing: -10% | 0.0% | +20%" [ref=e694] [cursor=pointer]':
+                - heading "MI • 150 SCR" [level=4] [ref=e695]
+                - paragraph [ref=e696]: "Bids: 4 | Sold: 3 | Binds: 3"
+                - paragraph [ref=e697]: "Recommended: -10%"
+                - paragraph [ref=e698]: "Testing: -10% | 0.0% | +20%"
+              - 'button "VA • 150 SCH Bids: 21 | Sold: 7 | Binds: 4 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e699] [cursor=pointer]':
+                - heading "VA • 150 SCH" [level=4] [ref=e700]
+                - paragraph [ref=e701]: "Bids: 21 | Sold: 7 | Binds: 4"
+                - paragraph [ref=e702]: "Recommended: +20%"
+                - paragraph [ref=e703]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "NM • 150 SCH Bids: 5 | Sold: 2 | Binds: 2 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e704] [cursor=pointer]':
+                - heading "NM • 150 SCH" [level=4] [ref=e705]
+                - paragraph [ref=e706]: "Bids: 5 | Sold: 2 | Binds: 2"
+                - paragraph [ref=e707]: "Recommended: +10%"
+                - paragraph [ref=e708]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MO • 125 MCR Bids: 33 | Sold: 3 | Binds: 2 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e709] [cursor=pointer]':
+                - heading "MO • 125 MCR" [level=4] [ref=e710]
+                - paragraph [ref=e711]: "Bids: 33 | Sold: 3 | Binds: 2"
+                - paragraph [ref=e712]: "Recommended: -10%"
+                - paragraph [ref=e713]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MO • 100 MCH Bids: 253 | Sold: 3 | Binds: 2 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e714] [cursor=pointer]':
+                - heading "MO • 100 MCH" [level=4] [ref=e715]
+                - paragraph [ref=e716]: "Bids: 253 | Sold: 3 | Binds: 2"
+                - paragraph [ref=e717]: "Recommended: +20%"
+                - paragraph [ref=e718]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "NE • 100 MCH Bids: 131 | Sold: 4 | Binds: 2 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e719] [cursor=pointer]':
+                - heading "NE • 100 MCH" [level=4] [ref=e720]
+                - paragraph [ref=e721]: "Bids: 131 | Sold: 4 | Binds: 2"
+                - paragraph [ref=e722]: "Recommended: +10%"
+                - paragraph [ref=e723]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "NV • 150 MCH Bids: 6 | Sold: 4 | Binds: 2 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e724] [cursor=pointer]':
+                - heading "NV • 150 MCH" [level=4] [ref=e725]
+                - paragraph [ref=e726]: "Bids: 6 | Sold: 4 | Binds: 2"
+                - paragraph [ref=e727]: "Recommended: +10%"
+                - paragraph [ref=e728]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "NE • 150 MCH Bids: 1 | Sold: 1 | Binds: 1 Recommended: +20% Testing: 0.0% | +10% | +20%" [ref=e729] [cursor=pointer]':
+                - heading "NE • 150 MCH" [level=4] [ref=e730]
+                - paragraph [ref=e731]: "Bids: 1 | Sold: 1 | Binds: 1"
+                - paragraph [ref=e732]: "Recommended: +20%"
+                - paragraph [ref=e733]: "Testing: 0.0% | +10% | +20%"
+              - 'button "OK • 125 SCH Bids: 218 | Sold: 5 | Binds: 2 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e734] [cursor=pointer]':
+                - heading "OK • 125 SCH" [level=4] [ref=e735]
+                - paragraph [ref=e736]: "Bids: 218 | Sold: 5 | Binds: 2"
+                - paragraph [ref=e737]: "Recommended: -10%"
+                - paragraph [ref=e738]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "ME • 100 MCH Bids: 24 | Sold: 4 | Binds: 2 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e739] [cursor=pointer]':
+                - heading "ME • 100 MCH" [level=4] [ref=e740]
+                - paragraph [ref=e741]: "Bids: 24 | Sold: 4 | Binds: 2"
+                - paragraph [ref=e742]: "Recommended: -10%"
+                - paragraph [ref=e743]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "IN • 150 MCH Bids: 7 | Sold: 3 | Binds: 2 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e744] [cursor=pointer]':
+                - heading "IN • 150 MCH" [level=4] [ref=e745]
+                - paragraph [ref=e746]: "Bids: 7 | Sold: 3 | Binds: 2"
+                - paragraph [ref=e747]: "Recommended: +20%"
+                - paragraph [ref=e748]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "MO • 125 MCH Bids: 172 | Sold: 4 | Binds: 4 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e749] [cursor=pointer]':
+                - heading "MO • 125 MCH" [level=4] [ref=e750]
+                - paragraph [ref=e751]: "Bids: 172 | Sold: 4 | Binds: 4"
+                - paragraph [ref=e752]: "Recommended: -10%"
+                - paragraph [ref=e753]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "NM • 140 MCH Bids: 22 | Sold: 2 | Binds: 8 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e754] [cursor=pointer]':
+                - heading "NM • 140 MCH" [level=4] [ref=e755]
+                - paragraph [ref=e756]: "Bids: 22 | Sold: 2 | Binds: 8"
+                - paragraph [ref=e757]: "Recommended: -10%"
+                - paragraph [ref=e758]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "NV • 140 MCH Bids: 38 | Sold: 2 | Binds: 1 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e759] [cursor=pointer]':
+                - heading "NV • 140 MCH" [level=4] [ref=e760]
+                - paragraph [ref=e761]: "Bids: 38 | Sold: 2 | Binds: 1"
+                - paragraph [ref=e762]: "Recommended: -10%"
+                - paragraph [ref=e763]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "WV • 100 SCR Bids: 239 | Sold: 8 | Binds: 2 Recommended: +20% Testing: -10% | 0.0% | +10% | +20%" [ref=e764] [cursor=pointer]':
+                - heading "WV • 100 SCR" [level=4] [ref=e765]
+                - paragraph [ref=e766]: "Bids: 239 | Sold: 8 | Binds: 2"
+                - paragraph [ref=e767]: "Recommended: +20%"
+                - paragraph [ref=e768]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "WV • 100 MCR Bids: 11 | Sold: 3 | Binds: 4 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e769] [cursor=pointer]':
+                - heading "WV • 100 MCR" [level=4] [ref=e770]
+                - paragraph [ref=e771]: "Bids: 11 | Sold: 3 | Binds: 4"
+                - paragraph [ref=e772]: "Recommended: +10%"
+                - paragraph [ref=e773]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "OH • 100 MCR Bids: 145 | Sold: 5 | Binds: 5 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e774] [cursor=pointer]':
+                - heading "OH • 100 MCR" [level=4] [ref=e775]
+                - paragraph [ref=e776]: "Bids: 145 | Sold: 5 | Binds: 5"
+                - paragraph [ref=e777]: "Recommended: -10%"
+                - paragraph [ref=e778]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "OR • 165 MCH Bids: 10 | Sold: 3 | Binds: 1 Recommended: +10% Testing: -10% | 0.0% | +10% | +20%" [ref=e779] [cursor=pointer]':
+                - heading "OR • 165 MCH" [level=4] [ref=e780]
+                - paragraph [ref=e781]: "Bids: 10 | Sold: 3 | Binds: 1"
+                - paragraph [ref=e782]: "Recommended: +10%"
+                - paragraph [ref=e783]: "Testing: -10% | 0.0% | +10% | +20%"
+              - 'button "OH • 165 MCH Bids: 11 | Sold: 3 | Binds: 2 Recommended: -10% Testing: -10% | 0.0% | +10% | +20%" [ref=e784] [cursor=pointer]':
+                - heading "OH • 165 MCH" [level=4] [ref=e785]
+                - paragraph [ref=e786]: "Bids: 11 | Sold: 3 | Binds: 2"
+                - paragraph [ref=e787]: "Recommended: -10%"
+                - paragraph [ref=e788]: "Testing: -10% | 0.0% | +10% | +20%"
+          - generic [ref=e178]:
+            - generic [ref=e180]:
+              - generic [ref=e181]:
+                - heading "NC • 125 MCH" [level=3] [ref=e789]
+                - paragraph [ref=e183]: "Strategy Rule (MCH) : Tier 3 - Aggressive Growth"
+                - paragraph [ref=e184]: "Recommended: +15% | Selected: +15% | Stat-Sig: mid (channel & state)"
+              - generic [ref=e185]:
+                - generic [ref=e186]: Bid Adjustment (Manual Override)
+                - combobox "Bid Adjustment (Manual Override)" [ref=e187]:
+                  - option "-10% | WR -21% | CPC -10% | Binds -7.7 | low (channel only)"
+                  - option "0.0% | WR - | CPC - | Binds 0.0 | baseline (baseline)"
+                  - option "+10% | WR 17% | CPC 6.3% | Binds 1.4 | low (channel only)"
+                  - option "+15% | WR 173% | CPC -15% | Binds 21 | mid (channel & state)" [selected]
+                  - option "+20% | WR 18% | CPC 11% | Binds 1.3 | low (channel only)"
+            - generic [ref=e188]:
+              - article [ref=e189]:
+                - heading "Bids" [level=3] [ref=e190]
+                - paragraph [ref=e191]: 2,556
+              - article [ref=e192]:
+                - heading "Sold" [level=3] [ref=e193]
+                - paragraph [ref=e194]: "60"
+              - article [ref=e195]:
+                - heading "Binds" [level=3] [ref=e196]
+                - paragraph [ref=e197]: "10"
+              - article [ref=e198]:
+                - heading "ROE" [level=3] [ref=e199]
+                - paragraph [ref=e200]: 18%
+              - article [ref=e201]:
+                - heading "COR" [level=3] [ref=e202]
+                - paragraph [ref=e203]: 91%
+              - article [ref=e204]:
+                - heading "WR Uplift" [level=3] [ref=e205]
+                - paragraph [ref=e206]: 173%
+              - article [ref=e207]:
+                - heading "CPC Uplift" [level=3] [ref=e208]
+                - paragraph [ref=e209]: "-15%"
+              - article [ref=e210]:
+                - heading "CPB Uplift" [level=3] [ref=e211]
+                - paragraph [ref=e212]: 7.9%
+              - article [ref=e213]:
+                - heading "Additional Clicks" [level=3] [ref=e214]
+                - paragraph [ref=e215]: 1,536
+              - article [ref=e216]:
+                - heading "Additional Binds" [level=3] [ref=e217]
+                - paragraph [ref=e218]: "21"
+              - article [ref=e219]:
+                - heading "Additional Budget" [level=3] [ref=e220]
+                - paragraph [ref=e221]: $2,535
+            - generic [ref=e222]:
+              - 'heading "Testing Point Impact: Win-Rate vs CPC vs CPB" [level=3] [ref=e223]'
+              - generic [ref=e224]:
+                - generic [ref=e791]:
+                  - generic [ref=e792]:
+                    - generic [ref=e793]: Win-Rate Uplift
+                    - generic [ref=e795]: CPC Uplift
+                    - generic [ref=e797]: CPB Uplift
+                  - generic [ref=e799]:
+                    - generic [ref=e800]: State+Channel evidence
+                    - generic [ref=e802]: Channel fallback evidence
+                - img [ref=e804]:
+                  - generic [ref=e805]:
+                    - generic [ref=e806]:
+                      - generic [ref=e809]: "-150%"
+                      - generic [ref=e811]: "-100%"
+                      - generic [ref=e813]: "-50%"
+                      - generic [ref=e815]: 0%
+                      - generic [ref=e817]: 50%
+                      - generic [ref=e819]: 100%
+                      - generic [ref=e821]: 150%
+                    - generic [ref=e822]:
+                      - generic [ref=e825]: "-10%"
+                      - generic [ref=e827]: 0.0%
+                      - generic [ref=e829]: +10%
+                      - generic [ref=e831]: +15%
+                      - generic [ref=e833]: +20%
+                    - generic [ref=e834]:
+                      - generic [ref=e838]: "-21%"
+                      - generic [ref=e839]: "-10%"
+                      - generic [ref=e840]: 106%
+                    - generic [ref=e842]:
+                      - generic [ref=e846]: 0.0%
+                      - generic [ref=e847]: 0.0%
+                      - generic [ref=e848]: "-10%"
+                    - generic [ref=e849]:
+                      - generic [ref=e853]: 17%
+                      - generic [ref=e854]: 6.3%
+                      - generic [ref=e855]: 46%
+                    - generic [ref=e857]:
+                      - generic [ref=e861]: 173%
+                      - generic [ref=e862]: "-15%"
+                      - generic [ref=e863]: 7.9%
+                    - generic [ref=e865]:
+                      - generic [ref=e869]: 18%
+                      - generic [ref=e870]: 11%
+                      - generic [ref=e871]: 37%
+            - generic [ref=e225]:
+              - heading "Testing Point Table" [level=3] [ref=e226]
+              - button "Export to Excel" [ref=e228] [cursor=pointer]
+              - table [ref=e230]:
+                - rowgroup [ref=e231]:
+                  - row "Testing Point ↕ Bids ↕ Sold ↕ Binds ↕ WR ↕ CPC ↕ Current CPB ↕ Expected CPB ↕ WR Uplift ↕ CPC Uplift ↕ CPB Uplift ↕ Additional Clicks ↕ Additional Binds ↕ Additional Budget ↕ Stat-Sig ↕ Evidence ↕" [ref=e232]:
+                    - columnheader "Testing Point ↕" [ref=e233] [cursor=pointer]
+                    - columnheader "Bids ↕" [ref=e234] [cursor=pointer]
+                    - columnheader "Sold ↕" [ref=e235] [cursor=pointer]
+                    - columnheader "Binds ↕" [ref=e236] [cursor=pointer]
+                    - columnheader "WR ↕" [ref=e237] [cursor=pointer]
+                    - columnheader "CPC ↕" [ref=e238] [cursor=pointer]
+                    - columnheader "Current CPB ↕" [ref=e239] [cursor=pointer]
+                    - columnheader "Expected CPB ↕" [ref=e240] [cursor=pointer]
+                    - columnheader "WR Uplift ↕" [ref=e241] [cursor=pointer]
+                    - columnheader "CPC Uplift ↕" [ref=e242] [cursor=pointer]
+                    - columnheader "CPB Uplift ↕" [ref=e243] [cursor=pointer]
+                    - columnheader "Additional Clicks ↕" [ref=e244] [cursor=pointer]
+                    - columnheader "Additional Binds ↕" [ref=e245] [cursor=pointer]
+                    - columnheader "Additional Budget ↕" [ref=e246] [cursor=pointer]
+                    - columnheader "Stat-Sig ↕" [ref=e247] [cursor=pointer]
+                    - columnheader "Evidence ↕" [ref=e248] [cursor=pointer]
+                  - row [ref=e249]:
+                    - columnheader [ref=e250]:
+                      - textbox "Filter" [ref=e251]
+                    - columnheader [ref=e252]:
+                      - textbox "Filter" [ref=e253]
+                    - columnheader [ref=e254]:
+                      - textbox "Filter" [ref=e255]
+                    - columnheader [ref=e256]:
+                      - textbox "Filter" [ref=e257]
+                    - columnheader [ref=e258]:
+                      - textbox "Filter" [ref=e259]
+                    - columnheader [ref=e260]:
+                      - textbox "Filter" [ref=e261]
+                    - columnheader [ref=e262]:
+                      - textbox "Filter" [ref=e263]
+                    - columnheader [ref=e264]:
+                      - textbox "Filter" [ref=e265]
+                    - columnheader [ref=e266]:
+                      - textbox "Filter" [ref=e267]
+                    - columnheader [ref=e268]:
+                      - textbox "Filter" [ref=e269]
+                    - columnheader [ref=e270]:
+                      - textbox "Filter" [ref=e271]
+                    - columnheader [ref=e272]:
+                      - textbox "Filter" [ref=e273]
+                    - columnheader [ref=e274]:
+                      - textbox "Filter" [ref=e275]
+                    - columnheader [ref=e276]:
+                      - textbox "Filter" [ref=e277]
+                    - columnheader [ref=e278]:
+                      - textbox "Filter" [ref=e279]
+                    - columnheader [ref=e280]:
+                      - textbox "Filter" [ref=e281]
+                - rowgroup [ref=e873]:
+                  - row "-10% 371 5 10 1.3% $10 $108 $221 -21% -10% 106% -36 -7.7 $-561 low channel only" [ref=e874]:
+                    - cell "-10%" [ref=e875]
+                    - cell "371" [ref=e876]
+                    - cell "5" [ref=e877]
+                    - cell "10" [ref=e878]
+                    - cell "1.3%" [ref=e879]
+                    - cell "$10" [ref=e880]
+                    - cell "$108" [ref=e881]
+                    - cell "$221" [ref=e882]
+                    - cell "-21%" [ref=e883]
+                    - cell "-10%" [ref=e884]
+                    - cell "106%" [ref=e885]
+                    - cell "-36" [ref=e886]
+                    - cell "-7.7" [ref=e887]
+                    - cell "$-561" [ref=e888]
+                    - cell "low" [ref=e889]
+                    - cell "channel only" [ref=e890]
+                  - row "0.0% 2,556 60 10 2.3% $11 $108 $97 - - -10% 0 0.0 $-111 baseline baseline" [ref=e891]:
+                    - cell "0.0%" [ref=e892]
+                    - cell "2,556" [ref=e893]
+                    - cell "60" [ref=e894]
+                    - cell "10" [ref=e895]
+                    - cell "2.3%" [ref=e896]
+                    - cell "$11" [ref=e897]
+                    - cell "$108" [ref=e898]
+                    - cell "$97" [ref=e899]
+                    - cell "-" [ref=e900]
+                    - cell "-" [ref=e901]
+                    - cell "-10%" [ref=e902]
+                    - cell "0" [ref=e903]
+                    - cell "0.0" [ref=e904]
+                    - cell "$-111" [ref=e905]
+                    - cell "baseline" [ref=e906]
+                    - cell "baseline" [ref=e907]
+                  - row "+10% 369 10 10 2.7% $18 $108 $157 17% 6.3% 46% 13 1.4 $715 low channel only" [ref=e908]:
+                    - cell "+10%" [ref=e909]
+                    - cell "369" [ref=e910]
+                    - cell "10" [ref=e911]
+                    - cell "10" [ref=e912]
+                    - cell "2.7%" [ref=e913]
+                    - cell "$18" [ref=e914]
+                    - cell "$108" [ref=e915]
+                    - cell "$157" [ref=e916]
+                    - cell "17%" [ref=e917]
+                    - cell "6.3%" [ref=e918]
+                    - cell "46%" [ref=e919]
+                    - cell "13" [ref=e920]
+                    - cell "1.4" [ref=e921]
+                    - cell "$715" [ref=e922]
+                    - cell "low" [ref=e923]
+                    - cell "channel only" [ref=e924]
+                  - row "+15% 9 4 10 44% $2.2 $108 $116 173% -15% 7.9% 1,536 21 $2,535 mid channel & state" [ref=e925]:
+                    - cell "+15%" [ref=e926]
+                    - cell "9" [ref=e927]
+                    - cell "4" [ref=e928]
+                    - cell "10" [ref=e929]
+                    - cell "44%" [ref=e930]
+                    - cell "$2.2" [ref=e931]
+                    - cell "$108" [ref=e932]
+                    - cell "$116" [ref=e933]
+                    - cell "173%" [ref=e934]
+                    - cell "-15%" [ref=e935]
+                    - cell "7.9%" [ref=e936]
+                    - cell "1,536" [ref=e937]
+                    - cell "21" [ref=e938]
+                    - cell "$2,535" [ref=e939]
+                    - cell "mid" [ref=e940]
+                    - cell "channel & state" [ref=e941]
+                  - row "+20% 343 9 10 2.6% $18 $108 $148 18% 11% 37% 10 1.3 $600 low channel only" [ref=e942]:
+                    - cell "+20%" [ref=e943]
+                    - cell "343" [ref=e944]
+                    - cell "9" [ref=e945]
+                    - cell "10" [ref=e946]
+                    - cell "2.6%" [ref=e947]
+                    - cell "$18" [ref=e948]
+                    - cell "$108" [ref=e949]
+                    - cell "$148" [ref=e950]
+                    - cell "18%" [ref=e951]
+                    - cell "11%" [ref=e952]
+                    - cell "37%" [ref=e953]
+                    - cell "10" [ref=e954]
+                    - cell "1.3" [ref=e955]
+                    - cell "$600" [ref=e956]
+                    - cell "low" [ref=e957]
+                    - cell "channel only" [ref=e958]
+    - text: ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕

@@ -1,0 +1,98 @@
+- main [ref=e2]:
+  - complementary [ref=e3]:
+    - generic [ref=e4]:
+      - button "Collapse sidebar" [ref=e5] [cursor=pointer]:
+        - img [ref=e6]
+      - button "Sidebar pinned" [ref=e8] [cursor=pointer]:
+        - img [ref=e9]
+    - heading "Beacon Lab" [level=1] [ref=e11]
+    - generic [ref=e12]:
+      - generic [ref=e13]: Plan
+      - combobox "Plan" [ref=e14]:
+        - option "Select plan" [selected]
+        - option "PW Quickstart 20260305160722"
+        - option "Live Smoke Plan 2"
+        - option "Live Smoke Plan"
+      - generic [ref=e15]: Activity + Lead Type
+      - combobox "Activity + Lead Type" [ref=e16]:
+        - option "All" [selected]
+        - option "Clicks + Auto"
+        - option "Clicks + Home"
+        - option "Leads + Auto"
+        - option "Leads + Home"
+        - option "Calls + Auto"
+        - option "Calls + Home"
+    - navigation [ref=e17]:
+      - button "Plan" [ref=e18] [cursor=pointer]:
+        - img [ref=e20]
+        - generic [ref=e22]: Plan
+      - generic [ref=e23]:
+        - button "Plan Builder" [ref=e24] [cursor=pointer]:
+          - img [ref=e26]
+          - generic [ref=e28]: Plan Builder
+        - button "Targets" [ref=e29] [cursor=pointer]:
+          - img [ref=e31]
+          - generic [ref=e33]: Targets
+        - button "Plan Strategy" [ref=e34] [cursor=pointer]:
+          - img [ref=e36]
+          - generic [ref=e38]: Plan Strategy
+        - button "Price Exploration Decisions" [ref=e39] [cursor=pointer]:
+          - img [ref=e41]
+          - generic [ref=e43]: Price Exploration Decisions
+      - button "Analytics" [ref=e44] [cursor=pointer]:
+        - img [ref=e46]
+        - generic [ref=e48]: Analytics
+      - button "Settings" [ref=e49] [cursor=pointer]:
+        - img [ref=e51]
+        - generic [ref=e53]: Settings
+  - generic [ref=e54]:
+    - generic [ref=e55]:
+      - generic [ref=e57]:
+        - generic [ref=e58]:
+          - heading "Plans" [level=2] [ref=e59]
+          - generic [ref=e60]:
+            - button "Add Plan" [ref=e61] [cursor=pointer]
+            - button "Refresh" [active] [ref=e62] [cursor=pointer]
+        - table [ref=e64]:
+          - rowgroup [ref=e65]:
+            - row "Name Description Performance Date Range Price Exploration Date Range Created Actions" [ref=e66]:
+              - columnheader "Name" [ref=e67]
+              - columnheader "Description" [ref=e68]
+              - columnheader "Performance Date Range" [ref=e69]
+              - columnheader "Price Exploration Date Range" [ref=e70]
+              - columnheader "Created" [ref=e71]
+              - columnheader "Actions" [ref=e72]
+          - rowgroup [ref=e73]:
+            - row "PW Quickstart 20260305160722 Playwright automated quickstart flow - - 3/5/2026, 6:07:24 PM Edit Clone Delete" [ref=e185]:
+              - cell "PW Quickstart 20260305160722" [ref=e186]
+              - cell "Playwright automated quickstart flow" [ref=e187]
+              - cell "-" [ref=e188]
+              - cell "-" [ref=e189]
+              - cell "3/5/2026, 6:07:24 PM" [ref=e190]
+              - cell "Edit Clone Delete" [ref=e191]:
+                - button "Edit" [ref=e192] [cursor=pointer]
+                - button "Clone" [ref=e193] [cursor=pointer]
+                - button "Delete" [ref=e194] [cursor=pointer]
+            - row "Live Smoke Plan 2 created by codex - - 3/1/2026, 3:55:24 PM Edit Clone Delete" [ref=e195]:
+              - cell "Live Smoke Plan 2" [ref=e196]
+              - cell "created by codex" [ref=e197]
+              - cell "-" [ref=e198]
+              - cell "-" [ref=e199]
+              - cell "3/1/2026, 3:55:24 PM" [ref=e200]
+              - cell "Edit Clone Delete" [ref=e201]:
+                - button "Edit" [ref=e202] [cursor=pointer]
+                - button "Clone" [ref=e203] [cursor=pointer]
+                - button "Delete" [ref=e204] [cursor=pointer]
+            - row "Live Smoke Plan created by codex - - 3/1/2026, 3:54:35 PM Edit Clone Delete" [ref=e205]:
+              - cell "Live Smoke Plan" [ref=e206]
+              - cell "created by codex" [ref=e207]
+              - cell "-" [ref=e208]
+              - cell "-" [ref=e209]
+              - cell "3/1/2026, 3:54:35 PM" [ref=e210]
+              - cell "Edit Clone Delete" [ref=e211]:
+                - button "Edit" [ref=e212] [cursor=pointer]
+                - button "Clone" [ref=e213] [cursor=pointer]
+                - button "Delete" [ref=e214] [cursor=pointer]
+        - paragraph [ref=e114]: Loaded 3 plan(s).
+      - text: ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕
+    - text: ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕ ↕

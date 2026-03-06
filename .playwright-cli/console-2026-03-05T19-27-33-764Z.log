@@ -1,0 +1,3 @@
+[   61517ms] [ERROR] Failed to load resource: the server responded with a status of 502 () @ https://beaconlab.kissterralab.workers.dev/api/analytics/state-analysis?qbc=325&planId=089bd324-1dd9-47cf-8704-d590123860bd&startDate=2026-01-02&endDate=2026-02-01:0
+[   61517ms] [ERROR] Failed to load resource: the server responded with a status of 502 () @ https://beaconlab.kissterralab.workers.dev/api/analytics/strategy-analysis?qbc=325&planId=089bd324-1dd9-47cf-8704-d590123860bd&startDate=2026-01-02&endDate=2026-02-01:0
+[   61517ms] [ERROR] Failed to load resource: the server responded with a status of 502 () @ https://beaconlab.kissterralab.workers.dev/api/analytics/state-analysis?qbc=325&planId=089bd324-1dd9-47cf-8704-d590123860bd&startDate=2026-01-02&endDate=2026-02-01:0
