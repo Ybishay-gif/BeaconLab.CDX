@@ -229,70 +229,94 @@ const BUSINESS_GLOSSARY = `
 const TABLE_SCHEMAS = `
 # Database Tables (PostgreSQL)
 
-## state_segment_daily
+## state_segment_daily ← PRIMARY performance table
 Performance data aggregated by day, state, segment, channel, activity/lead type.
-This is the primary table for performance monitoring (PM) analytics.
+Use this for all ROE, COR, CPB, Win Rate, Q2B calculations.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | event_date | DATE | Event date |
-| state | TEXT | US state code |
+| state | TEXT | US state code (e.g., 'MA', 'CA') |
 | segment | TEXT | MCH, MCR, SCH, SCR, HOME, RENT |
-| channel_group_name | TEXT | Marketing channel |
-| activity_type | TEXT | clicks, leads, calls (LOWERCASE) |
-| lead_type | TEXT | auto, home (LOWERCASE) |
+| channel_group_name | TEXT | Marketing channel name |
+| activity_type | TEXT | 'clicks', 'leads', 'calls' (ALWAYS lowercase) |
+| lead_type | TEXT | 'auto', 'home' (ALWAYS lowercase) |
 | bids | DOUBLE PRECISION | Number of bids placed |
-| sold | DOUBLE PRECISION | Number of conversions (clicks/leads/calls sold) |
-| total_cost | DOUBLE PRECISION | Total spend |
+| sold | DOUBLE PRECISION | Conversions (clicks/leads/calls sold) |
+| total_cost | DOUBLE PRECISION | Total spend ($) |
 | quote_started | DOUBLE PRECISION | Quote starts |
 | quotes | DOUBLE PRECISION | Completed quotes |
 | binds | DOUBLE PRECISION | Bound policies |
-| scored_policies | DOUBLE PRECISION | Policies with scoring data |
+| scored_policies | DOUBLE PRECISION | Policies with scoring data (needed for ROE, COR) |
 | target_cpb_sum | DOUBLE PRECISION | Sum of target CPB values |
-| lifetime_premium_sum | DOUBLE PRECISION | Sum of lifetime premiums |
-| lifetime_cost_sum | DOUBLE PRECISION | Sum of lifetime claims costs |
-| avg_profit_sum | DOUBLE PRECISION | Sum of per-policy profit |
-| avg_equity_sum | DOUBLE PRECISION | Sum of per-policy equity |
+| lifetime_premium_sum | DOUBLE PRECISION | Sum of lifetime premiums (for COR) |
+| lifetime_cost_sum | DOUBLE PRECISION | Sum of lifetime claims costs (for COR) |
+| avg_profit_sum | DOUBLE PRECISION | Sum of per-policy profit (for ROE) |
+| avg_equity_sum | DOUBLE PRECISION | Sum of per-policy equity (for ROE) |
 | avg_mrltv_sum | DOUBLE PRECISION | Sum of MRLTV values |
 
-## price_exploration_daily
-Price exploration (PE) data — one row per date × state × channel × testing point.
+**Key usage**: This table has daily rows. Always aggregate with SUM and GROUP BY state (or state+segment).
+Require \`scored_policies > 0\` for ROE/COR calculations.
+
+## price_exploration_daily ← Price exploration (PE) data
+One row per date × state × channel × testing_point. Contains pre-computed uplifts.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| date | DATE | Date |
+| date | DATE | Date (NOTE: "date" not "event_date") |
 | channel_group_name | TEXT | Marketing channel |
 | state | TEXT | US state code |
 | price_adjustment_percent | INTEGER | Testing point (-20 to +20, 0 = baseline) |
 | opps | BIGINT | Opportunities |
-| bids | DOUBLE PRECISION | Bids |
+| bids | DOUBLE PRECISION | Bids at this testing point |
 | total_impressions | DOUBLE PRECISION | Impressions |
 | avg_position | DOUBLE PRECISION | Average ad position |
-| sold | DOUBLE PRECISION | Conversions |
+| sold | DOUBLE PRECISION | Conversions at this testing point |
 | win_rate | DOUBLE PRECISION | sold / bids |
 | avg_bid | DOUBLE PRECISION | Average bid price |
 | cpc | DOUBLE PRECISION | Cost per conversion |
-| total_spend | DOUBLE PRECISION | Total spend |
-| click_to_quote | DOUBLE PRECISION | Quote rate |
-| number_of_quotes | DOUBLE PRECISION | Number of quotes |
-| stat_sig | TEXT | Statistical significance (baseline, high, mid, low, disqualified, state, channel) |
+| total_spend | DOUBLE PRECISION | Total spend (NOTE: "total_spend" not "total_cost") |
+| click_to_quote | DOUBLE PRECISION | Quote rate (click → quote) |
+| quote_start_rate | DOUBLE PRECISION | Quote start rate |
+| number_of_quote_started | DOUBLE PRECISION | Number of quote starts |
+| number_of_quotes | DOUBLE PRECISION | Number of completed quotes |
+| stat_sig | TEXT | State-level stat significance: 'baseline', 'state', 'channel', 'disqualified' |
+| stat_sig_channel_group | TEXT | Channel-group level stat significance |
+| cpc_uplift | DOUBLE PRECISION | State-level CPC uplift vs baseline |
+| cpc_uplift_channelgroup | DOUBLE PRECISION | Channel-group CPC uplift |
+| win_rate_uplift | DOUBLE PRECISION | State-level win rate uplift vs baseline |
+| win_rate_uplift_channelgroup | DOUBLE PRECISION | Channel-group win rate uplift |
+| additional_clicks | DOUBLE PRECISION | Projected additional clicks vs baseline |
 
-## targets
-User-defined performance targets per state/segment.
+**Key usage**: Column is "date" (not "event_date"), "total_spend" (not "total_cost").
+Testing point 0 = baseline. Positive TPs = higher price, negative = lower price.
+\`additional_clicks\` is already computed in the table.
+
+## targets ← User-defined CPB targets per state/segment
+One row per state+segment combination within a plan scope.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| target_id | TEXT | Unique ID |
-| plan_id | TEXT | Optional plan scope |
-| state | TEXT | US state code |
-| segment | TEXT | Segment code |
-| source | TEXT | Source identifier |
-| target_value | DOUBLE PRECISION | Target CPB value |
-| target_cor | DOUBLE PRECISION | Target COR (Combined Operating Ratio) |
-| activity_lead_type | TEXT | Activity-lead scope |
+| target_id | TEXT | Unique ID (PK) |
+| plan_id | TEXT | Plan scope (nullable) |
+| state | TEXT | US state code (UPPERCASE) |
+| segment | TEXT | Segment: MCH, MCR, SCH, SCR, HOME, RENT |
+| source | TEXT | Source identifier / account name |
+| target_value | DOUBLE PRECISION | Target CPB value ($) |
+| target_cor | DOUBLE PRECISION | Target COR (may be 0 if not set here — see strategy rules) |
+| activity_lead_type | TEXT | Combined scope: 'leads_auto', 'clicks_auto', 'clicks_home', etc. (DEFAULT '') |
+| created_by | TEXT | Creator user ID |
+| created_at | TIMESTAMPTZ | Creation time |
+| updated_by | TEXT | Last updater user ID |
+| updated_at | TIMESTAMPTZ | Last update time |
 
-## change_log
-Audit trail of all mutations in the system.
+**CRITICAL**: The \`activity_lead_type\` column stores COMBINED values like 'leads_auto', 'clicks_home', etc. — NOT separate activity_type/lead_type.
+When filtering: \`WHERE activity_lead_type = 'leads_auto'\` (not \`activity_type = 'leads' AND lead_type = 'auto'\`).
+When joining targets to state_segment_daily, you must join on \`state\` and \`segment\`.
+**Target COR**: The authoritative COR target often comes from strategy rules in \`plan_parameters\`, not this column (see Strategy Rules below).
+
+## change_log ← Audit trail
+All mutations in the system.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -300,39 +324,93 @@ Audit trail of all mutations in the system.
 | changed_at | TIMESTAMPTZ | When the change happened |
 | changed_by_user_id | TEXT | User who made the change |
 | changed_by_email | TEXT | User email |
-| object_type | TEXT | What was changed: plan, target, user, strategy, etc. |
+| object_type | TEXT | What was changed: 'plan', 'target', 'user', 'strategy', etc. |
 | object_id | TEXT | ID of the changed object |
-| action | TEXT | create, update, delete |
+| action | TEXT | 'create', 'update', 'delete' |
 | before_json | TEXT | State before change (JSON string) |
 | after_json | TEXT | State after change (JSON string) |
 | metadata_json | TEXT | Additional context (JSON string) |
-| module | TEXT | Module (planning, etc.) |
+| module | TEXT | Module: 'planning', etc. |
 
-## plans
-Planning configurations.
+## plans ← Planning configurations
 
 | Column | Type | Description |
 |--------|------|-------------|
 | plan_id | TEXT | Unique ID |
 | plan_name | TEXT | Display name |
 | description | TEXT | Description |
-| status | TEXT | draft, active, archived |
+| status | TEXT | 'draft', 'active', 'archived' |
 | created_by | TEXT | Creator user ID |
 | created_at | TIMESTAMPTZ | Creation time |
 | updated_at | TIMESTAMPTZ | Last update |
 
-## plan_parameters
-Key-value configuration for plans (strategy rules, PE decisions, context).
+## plan_parameters ← Key-value plan configuration (JSON blobs)
+Stores strategy rules, PE decisions, and plan context as JSON.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | plan_id | TEXT | Reference to plan |
-| param_key | TEXT | Parameter key (plan_context_config, plan_strategy_config, price_exploration_decisions) |
-| param_value | TEXT | JSON-stringified value |
+| param_key | TEXT | Key: 'plan_context_config', 'plan_strategy_config', 'price_exploration_decisions' |
+| param_value | TEXT | JSON-stringified value (see Strategy Rules below) |
 | value_type | TEXT | Type hint |
+| updated_by | TEXT | Last updater |
+| updated_at | TIMESTAMPTZ | Last update |
 
-## targets_perf_daily
-Daily performance data for targets evaluation.
+**Primary key**: (plan_id, param_key)
+
+### Strategy Rules (param_key = 'plan_strategy_config')
+The \`param_value\` is a JSON object with structure: \`{"scopes": {"leads_auto": [...rules], "clicks_auto": [...rules]}}\`
+Each rule has: \`{name, states[], segments[], maxCpcUplift, maxCpbUplift, corTarget, growthStrategy}\`
+- \`corTarget\` = the authoritative Target COR for those states+segments
+- \`growthStrategy\` = 'aggressive', 'balanced', or 'cautious'
+- These rules drive PE recommendations (which testing point to pick)
+
+**IMPORTANT**: Strategy rules are stored as JSON. You CANNOT query them directly with SQL. If the user asks about strategy rules or COR targets from strategy, explain that these are stored as JSON configuration and the system applies them programmatically.
+
+## plan_decisions ← Manual overrides for PE testing points
+
+| Column | Type | Description |
+|--------|------|-------------|
+| decision_id | TEXT | Unique ID |
+| plan_id | TEXT | Plan reference |
+| decision_type | TEXT | Decision type |
+| state | TEXT | US state code |
+| channel | TEXT | Channel group name |
+| decision_value | TEXT | The chosen testing point or decision |
+| reason | TEXT | User's reason for the override |
+| created_by | TEXT | User ID |
+| created_at | TIMESTAMPTZ | Creation time |
+
+## plan_runs ← Plan execution runs
+
+| Column | Type | Description |
+|--------|------|-------------|
+| run_id | TEXT | Unique run ID |
+| plan_id | TEXT | Plan reference |
+| triggered_by | TEXT | Who triggered the run |
+| status | TEXT | 'queued', 'running', 'completed', 'failed' |
+| started_at | TIMESTAMPTZ | Start time |
+| finished_at | TIMESTAMPTZ | End time |
+| error_message | TEXT | Error details if failed |
+| created_at | TIMESTAMPTZ | Creation time |
+
+## plan_results ← Simulation output from plan runs
+
+| Column | Type | Description |
+|--------|------|-------------|
+| run_id | TEXT | Reference to plan_runs |
+| plan_id | TEXT | Plan reference |
+| state | TEXT | US state code |
+| channel | TEXT | Channel group name |
+| metric_name | TEXT | Metric: 'roe', 'cor', 'cpb', 'binds', etc. |
+| baseline_value | DOUBLE PRECISION | Baseline metric value |
+| simulated_value | DOUBLE PRECISION | Simulated value with adjustments |
+| delta_value | DOUBLE PRECISION | Absolute change |
+| delta_pct | DOUBLE PRECISION | Percentage change |
+| created_at | TIMESTAMPTZ | Creation time |
+
+## targets_perf_daily ← Daily performance for targets evaluation
+Pre-aggregated performance data scoped to targets evaluation.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -340,8 +418,9 @@ Daily performance data for targets evaluation.
 | state | TEXT | US state code |
 | segment | TEXT | Segment |
 | source_key | TEXT | Source identifier |
-| activity_type | TEXT | Activity type |
-| lead_type | TEXT | Lead type |
+| company_account_id | TEXT | Company account ID |
+| activity_type | TEXT | Activity type (lowercase) |
+| lead_type | TEXT | Lead type (lowercase) |
 | sold | DOUBLE PRECISION | Conversions |
 | binds | DOUBLE PRECISION | Binds |
 | scored_policies | DOUBLE PRECISION | Scored policies |
@@ -444,10 +523,14 @@ If baseline COR > rule's corTarget, forces **cautious** weights regardless of co
 const QUERY_GUIDELINES = `
 # Query Guidelines
 
-## Common Query Patterns
+## CRITICAL Table Differences
+- \`state_segment_daily\`: uses \`event_date\` and \`total_cost\`
+- \`price_exploration_daily\`: uses \`date\` (NOT event_date) and \`total_spend\` (NOT total_cost)
+- \`targets\`: uses \`activity_lead_type\` (combined: 'leads_auto') — NOT separate activity_type/lead_type columns
+- Always aggregate \`state_segment_daily\` with SUM — it has daily granularity
+- Use NULLIF for division to avoid divide-by-zero
 
-### Performance by state (with ROE and COR)
-When asked about ROE, COR, CPB, etc. for a specific state, query \`state_segment_daily\`:
+## Pattern 1 — Performance by State (ROE, COR, CPB, WR)
 \`\`\`sql
 SELECT
   state,
@@ -459,15 +542,15 @@ SELECT
   CASE WHEN SUM(binds) = 0 THEN NULL ELSE SUM(total_cost) / SUM(binds) END AS cpb,
   CASE WHEN SUM(sold) = 0 THEN NULL ELSE SUM(total_cost) / SUM(sold) END AS cpc,
   CASE WHEN SUM(bids) = 0 THEN NULL ELSE SUM(sold) / SUM(bids) END AS win_rate,
+  CASE WHEN SUM(sold) = 0 THEN NULL ELSE SUM(quotes) / SUM(sold) END AS quote_rate,
   CASE WHEN SUM(quotes) = 0 THEN NULL ELSE SUM(binds) / SUM(quotes) END AS q2b
 FROM state_segment_daily
-WHERE state = 'MA'
+WHERE activity_type = 'leads' AND lead_type = 'auto'
 GROUP BY state
 \`\`\`
 
-### For ROE calculation, you need QBC (a plan-level parameter, typically around 0.5–2.0).
-If the user doesn't specify QBC, use a default of 1.0 and mention you assumed it.
-ROE query pattern:
+## Pattern 2 — ROE Calculation (needs QBC from plan context)
+If QBC is in the plan context, use it. Otherwise default to 1.0 and mention you assumed it.
 \`\`\`sql
 SELECT
   state,
@@ -478,28 +561,154 @@ SELECT
     (SUM(avg_profit_sum) / SUM(scored_policies))
     - 0.8 * (
       (SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81
-      + 1.0  -- QBC assumption
+      + 1.0  -- QBC: replace with actual value from plan context
     )
   ) / (SUM(avg_equity_sum) / SUM(scored_policies))
   END AS roe
 FROM state_segment_daily
-WHERE state = 'MA'
+WHERE activity_type = 'leads' AND lead_type = 'auto'
 GROUP BY state
 \`\`\`
 
-### Price exploration data
+## Pattern 3 — COR Calculation
 \`\`\`sql
-SELECT state, channel_group_name, price_adjustment_percent,
-       SUM(bids) AS bids, SUM(sold) AS sold,
-       CASE WHEN SUM(bids) = 0 THEN NULL ELSE SUM(sold) / SUM(bids) END AS win_rate,
-       CASE WHEN SUM(sold) = 0 THEN NULL ELSE SUM(total_spend) / SUM(sold) END AS cpc
+SELECT
+  state,
+  SUM(binds) AS binds,
+  CASE WHEN SUM(scored_policies) = 0 OR SUM(lifetime_premium_sum) = 0 THEN NULL
+  ELSE (
+    (SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81
+    + 1.0  -- QBC: replace with actual value
+    + (SUM(lifetime_cost_sum) / SUM(scored_policies))
+  ) / (SUM(lifetime_premium_sum) / SUM(scored_policies))
+  END AS cor
+FROM state_segment_daily
+WHERE activity_type = 'leads' AND lead_type = 'auto'
+GROUP BY state
+\`\`\`
+
+## Pattern 4 — Performance + Targets (join state_segment_daily with targets)
+To compare actual performance against targets (e.g., "states where COR < target COR"):
+\`\`\`sql
+WITH perf AS (
+  SELECT
+    state,
+    SUM(binds) AS binds,
+    SUM(scored_policies) AS scored_policies,
+    SUM(total_cost) AS total_cost,
+    CASE WHEN SUM(binds) = 0 THEN NULL ELSE SUM(total_cost) / SUM(binds) END AS cpb,
+    CASE WHEN SUM(scored_policies) = 0 OR SUM(avg_equity_sum) = 0 THEN NULL
+    ELSE (
+      (SUM(avg_profit_sum) / SUM(scored_policies))
+      - 0.8 * ((SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81 + 1.0)
+    ) / (SUM(avg_equity_sum) / SUM(scored_policies))
+    END AS roe,
+    CASE WHEN SUM(scored_policies) = 0 OR SUM(lifetime_premium_sum) = 0 THEN NULL
+    ELSE (
+      (SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81 + 1.0
+      + (SUM(lifetime_cost_sum) / SUM(scored_policies))
+    ) / (SUM(lifetime_premium_sum) / SUM(scored_policies))
+    END AS cor
+  FROM state_segment_daily
+  WHERE activity_type = 'leads' AND lead_type = 'auto'
+  GROUP BY state
+  HAVING SUM(scored_policies) > 0
+)
+SELECT
+  p.state,
+  p.binds,
+  p.cpb,
+  ROUND(p.roe::numeric, 4) AS roe,
+  ROUND(p.cor::numeric, 4) AS cor,
+  t.target_value AS target_cpb,
+  ROUND(t.target_cor::numeric, 4) AS target_cor
+FROM perf p
+JOIN targets t ON t.state = p.state
+WHERE t.activity_lead_type = 'leads_auto'
+  AND t.plan_id = 'THE_PLAN_ID'
+  AND p.roe > 0
+  AND p.cor < t.target_cor
+ORDER BY p.roe DESC
+\`\`\`
+**Note**: Join targets on \`state\`. Filter targets by \`activity_lead_type\` (combined value).
+If the user hasn't specified a plan_id, you can omit the plan_id filter or ask.
+
+## Pattern 5 — Price Exploration by State
+\`\`\`sql
+SELECT
+  state,
+  channel_group_name,
+  price_adjustment_percent AS testing_point,
+  SUM(bids) AS bids,
+  SUM(sold) AS sold,
+  CASE WHEN SUM(bids) = 0 THEN NULL ELSE SUM(sold) / SUM(bids) END AS win_rate,
+  CASE WHEN SUM(sold) = 0 THEN NULL ELSE SUM(total_spend) / SUM(sold) END AS cpc,
+  SUM(additional_clicks) AS additional_clicks
 FROM price_exploration_daily
 WHERE state = 'MA'
 GROUP BY state, channel_group_name, price_adjustment_percent
 ORDER BY channel_group_name, price_adjustment_percent
 \`\`\`
 
-### Change log queries
+## Pattern 6 — Performance + PE Additional Binds (COMPLEX cross-table)
+To find states with additional binds from PE recommendations, combine:
+1. Performance data from \`state_segment_daily\` (for ROE, COR, current binds, quote_rate, q2b)
+2. PE data from \`price_exploration_daily\` (for additional_clicks at non-baseline testing points)
+3. additional_binds = additional_clicks × quote_rate × q2b
+
+\`\`\`sql
+WITH perf AS (
+  SELECT
+    state,
+    SUM(binds) AS binds,
+    SUM(total_cost) AS total_cost,
+    SUM(scored_policies) AS scored_policies,
+    CASE WHEN SUM(binds) = 0 THEN NULL ELSE SUM(total_cost) / SUM(binds) END AS cpb,
+    CASE WHEN SUM(sold) = 0 THEN NULL ELSE SUM(quotes) / SUM(sold) END AS quote_rate,
+    CASE WHEN SUM(quotes) = 0 THEN NULL ELSE SUM(binds) / SUM(quotes) END AS q2b,
+    CASE WHEN SUM(scored_policies) = 0 OR SUM(avg_equity_sum) = 0 THEN NULL
+    ELSE (
+      (SUM(avg_profit_sum) / SUM(scored_policies))
+      - 0.8 * ((SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81 + 1.0)
+    ) / (SUM(avg_equity_sum) / SUM(scored_policies))
+    END AS roe,
+    CASE WHEN SUM(scored_policies) = 0 OR SUM(lifetime_premium_sum) = 0 THEN NULL
+    ELSE (
+      (SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81 + 1.0
+      + (SUM(lifetime_cost_sum) / SUM(scored_policies))
+    ) / (SUM(lifetime_premium_sum) / SUM(scored_policies))
+    END AS cor
+  FROM state_segment_daily
+  WHERE activity_type = 'leads' AND lead_type = 'auto'
+  GROUP BY state
+  HAVING SUM(scored_policies) > 0
+),
+pe_additional AS (
+  SELECT
+    state,
+    SUM(additional_clicks) AS total_additional_clicks
+  FROM price_exploration_daily
+  WHERE price_adjustment_percent != 0
+    AND stat_sig IN ('state', 'channel')
+  GROUP BY state
+  HAVING SUM(additional_clicks) > 0
+)
+SELECT
+  p.state,
+  p.binds AS current_binds,
+  ROUND(p.roe::numeric, 4) AS roe,
+  ROUND(p.cor::numeric, 4) AS cor,
+  ROUND(pe.total_additional_clicks::numeric, 0) AS additional_clicks,
+  ROUND((pe.total_additional_clicks * COALESCE(p.quote_rate, 0) * COALESCE(p.q2b, 0))::numeric, 1) AS estimated_additional_binds
+FROM perf p
+JOIN pe_additional pe ON pe.state = p.state
+WHERE p.roe > 0
+ORDER BY p.roe DESC
+\`\`\`
+**Note**: \`additional_binds = additional_clicks × quote_rate × q2b\`. This is an estimate.
+The actual PE pipeline uses more sophisticated blended uplifts and strategy rules.
+
+## Pattern 7 — Change Log
 \`\`\`sql
 SELECT changed_at, changed_by_email, object_type, action, after_json
 FROM change_log
@@ -508,11 +717,15 @@ ORDER BY changed_at DESC
 LIMIT 20
 \`\`\`
 
-## Important Notes
-- Always aggregate \`state_segment_daily\` with SUM — it has daily granularity
-- ROE and COR require \`scored_policies > 0\` to compute meaningful per-policy averages
-- Use NULLIF for division to avoid divide-by-zero errors
-- When asked about "top N" or "bottom N", always ORDER BY the relevant metric and LIMIT
-- The \`price_exploration_daily\` table uses \`date\` (not \`event_date\`) and \`total_spend\` (not \`total_cost\`)
-- The \`state_segment_daily\` table uses \`event_date\` and \`total_cost\`
+## Important SQL Rules
+1. Always aggregate \`state_segment_daily\` with SUM — it has daily rows
+2. ROE and COR require \`SUM(scored_policies) > 0\` for meaningful averages
+3. Use NULLIF(x, 0) for all division to avoid divide-by-zero
+4. For "top N" / "bottom N", always ORDER BY the metric and LIMIT N
+5. \`price_exploration_daily\` uses \`date\` and \`total_spend\`; \`state_segment_daily\` uses \`event_date\` and \`total_cost\`
+6. The \`targets\` table has \`activity_lead_type\` (combined: 'leads_auto'), NOT separate activity_type / lead_type columns
+7. Cast to ::numeric before ROUND() in PostgreSQL (e.g., \`ROUND(value::numeric, 2)\`)
+8. When the plan context provides a QBC value, always use it instead of the 1.0 default
+9. When the plan context provides activity_type and lead_type, always filter by them
+10. Strategy rules (COR targets, growth strategies) are stored as JSON in plan_parameters — they cannot be queried directly with SQL. If the user asks about strategy-defined COR targets, check the targets table's \`target_cor\` column as a fallback, or explain that COR targets come from plan configuration.
 `.trim();
