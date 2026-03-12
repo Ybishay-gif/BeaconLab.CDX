@@ -962,26 +962,27 @@ async function syncPeComputedForScope(
   const t0 = Date.now();
   try {
     const sql = buildPeSyncSql(activityType, leadType);
-    const [rows] = await bigquery.query({ query: sql, useLegacySql: false });
+    // Stream rows from BQ to avoid loading entire result set at once
+    const stream = bigquery.createQueryStream({ query: sql, useLegacySql: false });
+    const allRows: Record<string, unknown>[] = [];
+    for await (const row of stream) {
+      const r = row as Record<string, unknown>;
+      r.activity_lead_type = scope;
+      allRows.push(r);
+    }
 
-    if (!rows.length) {
+    if (!allRows.length) {
       return { table: `pe_computed_daily[${scope}]`, rows: 0, ms: Date.now() - t0 };
     }
 
-    // Tag each row with the scope and insert
-    const taggedRows = rows.map((row: Record<string, unknown>) => ({
-      ...row,
-      activity_lead_type: scope
-    }));
-
     await pgTransaction(async (exec) => {
-      for (let i = 0; i < taggedRows.length; i += BATCH_SIZE) {
-        const batch = taggedRows.slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < allRows.length; i += BATCH_SIZE) {
+        const batch = allRows.slice(i, i + BATCH_SIZE);
         await exec(buildInsertBatch("pe_computed_daily", PE_COMPUTED_DAILY_COLS, batch));
       }
     });
 
-    return { table: `pe_computed_daily[${scope}]`, rows: taggedRows.length, ms: Date.now() - t0 };
+    return { table: `pe_computed_daily[${scope}]`, rows: allRows.length, ms: Date.now() - t0 };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`PE sync error for scope ${scope}:`, message);
@@ -1075,17 +1076,21 @@ async function syncPlanMerged(): Promise<SyncTableResult> {
       )
     `;
 
-    const [rows] = await bigquery.query({ query: sql, useLegacySql: false });
+    const stream = bigquery.createQueryStream({ query: sql, useLegacySql: false });
+    const allRows: Record<string, unknown>[] = [];
+    for await (const row of stream) {
+      allRows.push(row as Record<string, unknown>);
+    }
 
     await pgTransaction(async (exec) => {
       await exec("TRUNCATE plan_merged_daily");
-      for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-        const batch = (rows as Record<string, unknown>[]).slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < allRows.length; i += BATCH_SIZE) {
+        const batch = allRows.slice(i, i + BATCH_SIZE);
         await exec(buildInsertBatch("plan_merged_daily", PLAN_MERGED_DAILY_COLS, batch));
       }
     });
 
-    return { table: "plan_merged_daily", rows: rows.length, ms: Date.now() - t0 };
+    return { table: "plan_merged_daily", rows: allRows.length, ms: Date.now() - t0 };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("Plan-merged sync error:", message);

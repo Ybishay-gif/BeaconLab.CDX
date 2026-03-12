@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { config } from "../config.js";
-import { query, table } from "../db/bigquery.js";
+import { query, table } from "../db/index.js";
+import { VALID_MODULE_IDS, isValidModuleId } from "../modules.js";
 let authTablesReady = null;
 function isSerializableConflict(error) {
     const message = typeof error === "object" && error !== null && "message" in error ? String(error.message) : "";
@@ -38,12 +39,16 @@ function validatePasswordStrength(password) {
     }
 }
 async function ensureAuthTablesExist() {
+    // PG schema created via migration — no runtime DDL needed
+    if (config.usePg)
+        return;
     if (!authTablesReady) {
         authTablesReady = (async () => {
             await query(`
           CREATE TABLE IF NOT EXISTS ${table("users")} (
             user_id STRING NOT NULL,
             email STRING NOT NULL,
+            name STRING,
             role STRING NOT NULL,
             is_active BOOL NOT NULL,
             created_at TIMESTAMP NOT NULL,
@@ -86,13 +91,14 @@ async function getUserByEmail(email) {
     return rows[0] || null;
 }
 async function getCredentialsByUserId(userId) {
+    const castLogin = config.usePg ? "last_login_at::text" : "CAST(last_login_at AS STRING)";
     const rows = await query(`
       SELECT
         user_id,
         email,
         password_salt,
         password_hash,
-        CAST(last_login_at AS STRING) AS last_login_at
+        ${castLogin} AS last_login_at
       FROM ${table("user_credentials")}
       WHERE user_id = @userId
       LIMIT 1
@@ -101,6 +107,10 @@ async function getCredentialsByUserId(userId) {
 }
 async function createSession(user) {
     const token = randomBytes(32).toString("hex");
+    const expiresExpr = config.usePg
+        ? "NOW() + INTERVAL '14 days'"
+        : "TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)";
+    const now = config.usePg ? "NOW()" : "CURRENT_TIMESTAMP()";
     await withSerializableRetry(() => query(`
         INSERT INTO ${table("auth_sessions")} (
           session_token,
@@ -116,9 +126,9 @@ async function createSession(user) {
           @userId,
           @email,
           @role,
-          TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 14 DAY),
-          CURRENT_TIMESTAMP(),
-          CURRENT_TIMESTAMP()
+          ${expiresExpr},
+          ${now},
+          ${now}
         )
       `, {
         token,
@@ -152,44 +162,41 @@ export async function setupUserPassword(email, password) {
     }
     const salt = randomBytes(16).toString("hex");
     const hashed = hashPassword(password, salt);
-    await query(`
-      MERGE ${table("user_credentials")} AS target
-      USING (
-        SELECT @userId AS user_id, @email AS email, @salt AS password_salt, @hashed AS password_hash
-      ) AS source
-      ON target.user_id = source.user_id
-      WHEN MATCHED THEN
-        UPDATE SET
-          email = source.email,
-          password_salt = source.password_salt,
-          password_hash = source.password_hash,
-          last_login_at = CURRENT_TIMESTAMP(),
-          updated_at = CURRENT_TIMESTAMP()
-      WHEN NOT MATCHED THEN
-        INSERT (
-          user_id,
-          email,
-          password_salt,
-          password_hash,
-          last_login_at,
-          created_at,
-          updated_at
+    if (config.usePg) {
+        await query(`
+        INSERT INTO ${table("user_credentials")} (
+          user_id, email, password_salt, password_hash, last_login_at, created_at, updated_at
+        ) VALUES (
+          @userId, @email, @salt, @hashed, NOW(), NOW(), NOW()
         )
-        VALUES (
-          source.user_id,
-          source.email,
-          source.password_salt,
-          source.password_hash,
-          CURRENT_TIMESTAMP(),
-          CURRENT_TIMESTAMP(),
-          CURRENT_TIMESTAMP()
-        )
-    `, {
-        userId: user.user_id,
-        email: user.email,
-        salt,
-        hashed
-    });
+        ON CONFLICT (user_id) DO UPDATE SET
+          email = EXCLUDED.email,
+          password_salt = EXCLUDED.password_salt,
+          password_hash = EXCLUDED.password_hash,
+          last_login_at = NOW(),
+          updated_at = NOW()
+      `, { userId: user.user_id, email: user.email, salt, hashed });
+    }
+    else {
+        await query(`
+        MERGE ${table("user_credentials")} AS target
+        USING (
+          SELECT @userId AS user_id, @email AS email, @salt AS password_salt, @hashed AS password_hash
+        ) AS source
+        ON target.user_id = source.user_id
+        WHEN MATCHED THEN
+          UPDATE SET
+            email = source.email,
+            password_salt = source.password_salt,
+            password_hash = source.password_hash,
+            last_login_at = CURRENT_TIMESTAMP(),
+            updated_at = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN
+          INSERT (user_id, email, password_salt, password_hash, last_login_at, created_at, updated_at)
+          VALUES (source.user_id, source.email, source.password_salt, source.password_hash,
+                  CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
+      `, { userId: user.user_id, email: user.email, salt, hashed });
+    }
     return createSession({
         userId: user.user_id,
         email: user.email,
@@ -237,7 +244,15 @@ export async function loginAdminWithCode(code) {
         role: "admin"
     });
 }
+// ── Session cache: avoids a BQ round-trip on every authenticated request ──
+const sessionCache = new Map();
+const SESSION_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
 export async function validateSessionToken(token) {
+    // Fast-path: return from in-memory cache
+    const cached = sessionCache.get(token);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.user;
+    }
     await ensureAuthTablesExist();
     const rows = await query(`
       SELECT session_token, user_id, email, role
@@ -249,6 +264,7 @@ export async function validateSessionToken(token) {
     `, { token });
     const session = rows[0];
     if (!session) {
+        sessionCache.delete(token);
         return null;
     }
     void withSerializableRetry(() => query(`
@@ -256,40 +272,91 @@ export async function validateSessionToken(token) {
         SET last_seen_at = CURRENT_TIMESTAMP()
         WHERE session_token = @token
       `, { token })).catch(() => undefined);
-    return {
+    const user = {
         userId: session.user_id,
         email: session.email,
         role: session.role
     };
+    sessionCache.set(token, { user, expiresAt: Date.now() + SESSION_CACHE_TTL_MS });
+    return user;
 }
 export async function logoutSession(token) {
+    sessionCache.delete(token);
     await ensureAuthTablesExist();
     await query(`
       DELETE FROM ${table("auth_sessions")}
       WHERE session_token = @token
     `, { token });
 }
+// ── Module access ────────────────────────────────────────────────
+export async function getUserModules(userId) {
+    if (!config.usePg)
+        return VALID_MODULE_IDS; // BQ: no module table, grant all
+    const rows = await query(`SELECT module_id FROM ${table("user_modules")} WHERE user_id = @userId`, { userId });
+    return rows.map((r) => r.module_id);
+}
+export async function setUserModules(userId, modules) {
+    const valid = modules.filter(isValidModuleId);
+    if (valid.length === 0) {
+        const error = new Error("At least one valid module is required.");
+        error.status = 400;
+        throw error;
+    }
+    await query(`DELETE FROM ${table("user_modules")} WHERE user_id = @userId`, { userId });
+    for (const moduleId of valid) {
+        await query(`INSERT INTO ${table("user_modules")} (user_id, module_id) VALUES (@userId, @moduleId)`, { userId, moduleId });
+    }
+}
 export async function listManagedUsers() {
     await ensureAuthTablesExist();
-    return query(`
+    const castLogin = config.usePg ? "c.last_login_at::text" : "CAST(c.last_login_at AS STRING)";
+    const castCreated = config.usePg ? "u.created_at::text" : "CAST(u.created_at AS STRING)";
+    if (config.usePg) {
+        const rows = await query(`
+        SELECT
+          u.user_id,
+          u.email,
+          u.name,
+          u.role,
+          u.is_active AS active,
+          ${castLogin} AS last_login,
+          ${castCreated} AS created_at,
+          COALESCE(array_agg(m.module_id) FILTER (WHERE m.module_id IS NOT NULL), '{}') AS modules
+        FROM ${table("users")} AS u
+        LEFT JOIN ${table("user_credentials")} AS c
+          ON c.user_id = u.user_id
+        LEFT JOIN ${table("user_modules")} AS m
+          ON m.user_id = u.user_id
+        GROUP BY u.user_id, u.email, u.name, u.role, u.is_active, c.last_login_at, u.created_at
+        ORDER BY LOWER(u.email)
+      `);
+        return rows.map((r) => ({ ...r, modules: r.modules ?? [] }));
+    }
+    // BQ fallback: no module table, grant all modules
+    const rows = await query(`
       SELECT
         u.user_id,
         u.email,
+        u.name,
         u.role,
-        u.is_active,
-        CAST(c.last_login_at AS STRING) AS last_login_at
+        u.is_active AS active,
+        ${castLogin} AS last_login,
+        ${castCreated} AS created_at
       FROM ${table("users")} AS u
       LEFT JOIN ${table("user_credentials")} AS c
         ON c.user_id = u.user_id
       ORDER BY LOWER(u.email)
     `);
+    return rows.map((r) => ({ ...r, modules: VALID_MODULE_IDS }));
 }
-export async function addManagedUser(email) {
+export async function addManagedUser(email, opts) {
     await ensureAuthTablesExist();
     const normalizedEmail = normalizeEmail(email);
     if (!normalizedEmail) {
         fail(400, "Email is required.");
     }
+    const name = opts?.name?.trim() || null;
+    const role = opts?.role === "admin" ? "admin" : "planner";
     const existing = await getUserByEmail(normalizedEmail);
     const userId = existing?.user_id || randomUUID();
     if (!existing) {
@@ -297,6 +364,7 @@ export async function addManagedUser(email) {
         INSERT INTO ${table("users")} (
           user_id,
           email,
+          name,
           role,
           is_active,
           created_at,
@@ -305,43 +373,46 @@ export async function addManagedUser(email) {
         VALUES (
           @userId,
           @email,
-          'planner',
+          @name,
+          @role,
           TRUE,
           CURRENT_TIMESTAMP(),
           CURRENT_TIMESTAMP()
         )
+      `, { userId, email: normalizedEmail, name, role });
+    }
+    if (config.usePg) {
+        await query(`
+        INSERT INTO ${table("user_credentials")} (
+          user_id, email, password_salt, password_hash, last_login_at, created_at, updated_at
+        ) VALUES (
+          @userId, @email, NULL, NULL, NULL, NOW(), NOW()
+        )
+        ON CONFLICT (user_id) DO UPDATE SET
+          email = EXCLUDED.email,
+          updated_at = NOW()
       `, { userId, email: normalizedEmail });
     }
-    await query(`
-      MERGE ${table("user_credentials")} AS target
-      USING (
-        SELECT @userId AS user_id, @email AS email
-      ) AS source
-      ON target.user_id = source.user_id
-      WHEN MATCHED THEN
-        UPDATE SET
-          email = source.email,
-          updated_at = CURRENT_TIMESTAMP()
-      WHEN NOT MATCHED THEN
-        INSERT (
-          user_id,
-          email,
-          password_salt,
-          password_hash,
-          last_login_at,
-          created_at,
-          updated_at
-        )
-        VALUES (
-          source.user_id,
-          source.email,
-          NULL,
-          NULL,
-          NULL,
-          CURRENT_TIMESTAMP(),
-          CURRENT_TIMESTAMP()
-        )
-    `, { userId, email: normalizedEmail });
+    else {
+        await query(`
+        MERGE ${table("user_credentials")} AS target
+        USING (
+          SELECT @userId AS user_id, @email AS email
+        ) AS source
+        ON target.user_id = source.user_id
+        WHEN MATCHED THEN
+          UPDATE SET
+            email = source.email,
+            updated_at = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN
+          INSERT (user_id, email, password_salt, password_hash, last_login_at, created_at, updated_at)
+          VALUES (source.user_id, source.email, NULL, NULL, NULL, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
+      `, { userId, email: normalizedEmail });
+    }
+    // Grant default module access (planning)
+    if (config.usePg) {
+        await query(`INSERT INTO ${table("user_modules")} (user_id, module_id) VALUES (@userId, 'planning') ON CONFLICT DO NOTHING`, { userId });
+    }
     return { userId, email: normalizedEmail };
 }
 export async function resetManagedUserPassword(userId) {
@@ -356,36 +427,36 @@ export async function resetManagedUserPassword(userId) {
     if (!user) {
         fail(404, "User not found.");
     }
-    await query(`
-      MERGE ${table("user_credentials")} AS target
-      USING (
-        SELECT @userId AS user_id, @email AS email
-      ) AS source
-      ON target.user_id = source.user_id
-      WHEN MATCHED THEN
-        UPDATE SET
-          email = source.email,
+    if (config.usePg) {
+        await query(`
+        INSERT INTO ${table("user_credentials")} (
+          user_id, email, password_salt, password_hash, last_login_at, created_at, updated_at
+        ) VALUES (
+          @userId, @email, NULL, NULL, NULL, NOW(), NOW()
+        )
+        ON CONFLICT (user_id) DO UPDATE SET
+          email = EXCLUDED.email,
           password_salt = NULL,
           password_hash = NULL,
-          updated_at = CURRENT_TIMESTAMP()
-      WHEN NOT MATCHED THEN
-        INSERT (
-          user_id,
-          email,
-          password_salt,
-          password_hash,
-          last_login_at,
-          created_at,
-          updated_at
-        )
-        VALUES (
-          source.user_id,
-          source.email,
-          NULL,
-          NULL,
-          NULL,
-          CURRENT_TIMESTAMP(),
-          CURRENT_TIMESTAMP()
-        )
-    `, { userId: user.user_id, email: user.email });
+          updated_at = NOW()
+      `, { userId: user.user_id, email: user.email });
+    }
+    else {
+        await query(`
+        MERGE ${table("user_credentials")} AS target
+        USING (
+          SELECT @userId AS user_id, @email AS email
+        ) AS source
+        ON target.user_id = source.user_id
+        WHEN MATCHED THEN
+          UPDATE SET
+            email = source.email,
+            password_salt = NULL,
+            password_hash = NULL,
+            updated_at = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN
+          INSERT (user_id, email, password_salt, password_hash, last_login_at, created_at, updated_at)
+          VALUES (source.user_id, source.email, NULL, NULL, NULL, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
+      `, { userId: user.user_id, email: user.email });
+    }
 }
