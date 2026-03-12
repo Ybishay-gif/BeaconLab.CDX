@@ -297,6 +297,22 @@ export async function listPEFiltersPG(
 
 // ── 4. getPriceExplorationBQviaPG ────────────────────────────────────
 
+const PE_SELECT_COLS = `
+  channel_group_name, state, testing_point,
+  opps, bids, win_rate, sold, binds, quotes,
+  click_to_quote, channel_quote, click_to_channel_quote,
+  q2b, channel_binds, channel_q2b,
+  cpc, avg_bid,
+  win_rate_uplift_state, cpc_uplift_state,
+  win_rate_uplift_channel, cpc_uplift_channel,
+  win_rate_uplift, cpc_uplift,
+  additional_clicks, expected_bind_change, additional_budget_needed,
+  current_cpb, expected_cpb, cpb_uplift,
+  performance, roe, combined_ratio,
+  recommended_testing_point, stat_sig,
+  COALESCE(stat_sig_channel_group, '') AS stat_sig_channel_group,
+  stat_sig_source`;
+
 export async function getPEBQviaPG(
   normalized: {
     startDate: string;
@@ -315,7 +331,6 @@ export async function getPEBQviaPG(
   const conditions: string[] = [];
   const params: Record<string, unknown> = {};
 
-  // Scope filter
   const activityLeadType = normalized.activityType && normalized.leadType
     ? `${normalized.activityType}_${normalized.leadType}`
     : "";
@@ -324,76 +339,27 @@ export async function getPEBQviaPG(
     params.scope = activityLeadType;
   }
 
-  // State filter (skip if __ALL__)
   const isAllStates = normalized.states.length === 1 && normalized.states[0] === "__ALL__";
   if (!isAllStates && normalized.states.length > 0) {
     conditions.push("state = ANY(@states)");
     params.states = normalized.states;
   }
 
-  // Channel filter (skip if __ALL__)
   const isAllChannels = normalized.channelGroups.length === 1 && normalized.channelGroups[0] === "__ALL__";
   if (!isAllChannels && normalized.channelGroups.length > 0) {
     conditions.push("channel_group_name = ANY(@channelGroups)");
     params.channelGroups = normalized.channelGroups;
   }
 
-  params.qbc = normalized.qbc;
   params.limit = normalized.limit;
-
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-
-  // Recompute ROE and combined_ratio with runtime qbc
-  // ROE = (avg_profit - 0.8 * (cpb / 0.81 + qbc)) / avg_equity
-  // COR = (cpb / 0.81 + qbc + avg_lifetime_cost) / avg_lifetime_premium
-  const roeExpr = `
-    CASE
-      WHEN expected_cpb IS NULL
-        OR scf_avg_equity IS NULL
-        OR scf_avg_equity = 0
-        THEN 0
-      ELSE (
-        scf_avg_profit
-        - (0.8 * (expected_cpb / 0.81 + @qbc))
-      ) / scf_avg_equity
-    END`;
-
-  const corExpr = `
-    CASE
-      WHEN expected_cpb IS NULL
-        OR scf_avg_lifetime_premium IS NULL
-        OR scf_avg_lifetime_premium = 0
-        THEN 0
-      ELSE (
-        expected_cpb / 0.81
-        + @qbc
-        + scf_avg_lifetime_cost
-      ) / scf_avg_lifetime_premium
-    END`;
 
   let sql: string;
   if (normalized.topPairs > 0) {
     params.topPairs = normalized.topPairs;
     sql = `
       WITH base AS (
-        SELECT
-          channel_group_name, state, testing_point,
-          opps, bids, win_rate, sold, binds, quotes,
-          click_to_quote, channel_quote, click_to_channel_quote,
-          q2b, channel_binds, channel_q2b,
-          cpc, avg_bid,
-          win_rate_uplift_state, cpc_uplift_state,
-          win_rate_uplift_channel, cpc_uplift_channel,
-          win_rate_uplift, cpc_uplift,
-          additional_clicks, expected_bind_change, additional_budget_needed,
-          current_cpb, expected_cpb, cpb_uplift,
-          performance,
-          ${roeExpr} AS roe,
-          ${corExpr} AS combined_ratio,
-          recommended_testing_point,
-          stat_sig,
-          COALESCE(stat_sig_channel_group, '') AS stat_sig_channel_group,
-          stat_sig_source
+        SELECT ${PE_SELECT_COLS}
         FROM pe_computed_daily
         ${where}
       ),
@@ -415,24 +381,7 @@ export async function getPEBQviaPG(
     `;
   } else {
     sql = `
-      SELECT
-        channel_group_name, state, testing_point,
-        opps, bids, win_rate, sold, binds, quotes,
-        click_to_quote, channel_quote, click_to_channel_quote,
-        q2b, channel_binds, channel_q2b,
-        cpc, avg_bid,
-        win_rate_uplift_state, cpc_uplift_state,
-        win_rate_uplift_channel, cpc_uplift_channel,
-        win_rate_uplift, cpc_uplift,
-        additional_clicks, expected_bind_change, additional_budget_needed,
-        current_cpb, expected_cpb, cpb_uplift,
-        performance,
-        ${roeExpr} AS roe,
-        ${corExpr} AS combined_ratio,
-        recommended_testing_point,
-        stat_sig,
-        COALESCE(stat_sig_channel_group, '') AS stat_sig_channel_group,
-        stat_sig_source
+      SELECT ${PE_SELECT_COLS}
       FROM pe_computed_daily
       ${where}
       ORDER BY channel_group_name, state, testing_point
