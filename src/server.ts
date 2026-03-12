@@ -153,6 +153,32 @@ async function runMigrations() {
       )
     `);
 
+    // Tickets table (bug reports & feature requests)
+    await pgExec(`
+      CREATE TABLE IF NOT EXISTS tickets (
+        ticket_id        TEXT PRIMARY KEY,
+        ticket_number    SERIAL,
+        type             TEXT NOT NULL CHECK (type IN ('bug', 'feature')),
+        status           TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'in_progress', 'done')),
+        title            TEXT NOT NULL,
+        description      TEXT NOT NULL DEFAULT '',
+        module           TEXT NOT NULL,
+        page             TEXT NOT NULL,
+        attachments      JSONB DEFAULT '[]',
+        created_by       TEXT NOT NULL,
+        created_by_email TEXT NOT NULL,
+        assigned_to      TEXT,
+        resolved_at      TIMESTAMPTZ,
+        resolution_notes TEXT,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets (status, created_at DESC)");
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_tickets_created_by ON tickets (created_by)");
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_tickets_type ON tickets (type)");
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_tickets_module ON tickets (module)");
+
     console.log("Migrations OK");
   } catch (err) {
     console.warn("Migration warning (non-fatal):", err);
