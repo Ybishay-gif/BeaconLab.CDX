@@ -18,6 +18,9 @@ import {
   upsertPlanContext
 } from "../../services/plansService.js";
 import { appendChangeLog } from "../../services/changeLogService.js";
+import { getPriceExploration } from "../../services/analyticsService.js";
+import { buildPlanOutcome } from "../../services/planOutcomeService.js";
+import { parseOptionalNumber, parseQueryArray } from "./queryParsers.js";
 
 const planContextSchema = z.object({
   activity: z.string().optional(),
@@ -306,6 +309,53 @@ planRoutes.get("/plans/:planId/runs/:runId/results", async (req, res, next) => {
   try {
     const results = await getRunResults(req.params.planId, req.params.runId);
     res.json({ results });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* ── Plan Outcome — generate grouped outcome from PE recommended TPs ── */
+
+planRoutes.post("/plans/:planId/outcome/generate", requireRole(["admin", "planner"]), async (req, res, next) => {
+  try {
+    const planId = req.params.planId;
+    const qbc = parseOptionalNumber(req.body.qbc);
+    if (!Number.isFinite(qbc)) {
+      res.status(400).json({ error: "qbc is required" });
+      return;
+    }
+
+    const peRows = await getPriceExploration({
+      planId,
+      startDate: typeof req.body.startDate === "string" ? req.body.startDate : undefined,
+      endDate: typeof req.body.endDate === "string" ? req.body.endDate : undefined,
+      q2bStartDate: typeof req.body.q2bStartDate === "string" ? req.body.q2bStartDate : undefined,
+      q2bEndDate: typeof req.body.q2bEndDate === "string" ? req.body.q2bEndDate : undefined,
+      states: Array.isArray(req.body.states) ? req.body.states : [],
+      channelGroups: Array.isArray(req.body.channelGroups) ? req.body.channelGroups : [],
+      activityLeadType: typeof req.body.activityLeadType === "string" ? req.body.activityLeadType : undefined,
+      qbc,
+    });
+
+    const outcome = buildPlanOutcome(peRows);
+
+    await upsertParameters(planId, req.user!.userId, [{
+      key: "plan_outcome_json",
+      value: JSON.stringify(outcome),
+      valueType: "json"
+    }]);
+
+    appendChangeLog(
+      { userId: req.user!.userId, email: req.user!.email },
+      {
+        objectType: "plan_outcome",
+        objectId: planId,
+        action: "generate",
+        after: { groups: outcome.summary.total_groups, remainder: outcome.summary.total_remainder },
+      }
+    ).catch(console.error);
+
+    res.json({ outcome });
   } catch (error) {
     next(error);
   }
