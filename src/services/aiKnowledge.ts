@@ -41,13 +41,12 @@ function buildPlanContextSection(ctx: PlanContextInput): string {
   lines.push("Use these values to scope ALL data queries unless the user explicitly overrides them.\n");
 
   // Activity & Lead Type
+  // DB values are LOWERCASE: clicks, leads, calls, auto, home
   if (ctx.activityLeadType) {
     const [activity, leadType] = ctx.activityLeadType.split("_");
-    const activityLabel = activity === "clicks" ? "Click" : activity === "leads" ? "Lead" : activity === "calls" ? "Call" : activity;
-    const leadLabel = leadType === "auto" ? "CAR_INSURANCE_LEAD" : leadType === "home" ? "HOME_INSURANCE_LEAD" : leadType;
-    lines.push(`**Activity Type**: ${activityLabel}`);
-    lines.push(`**Lead Type**: ${leadLabel}`);
-    lines.push(`→ When querying \`state_segment_daily\`, always include: \`WHERE activity_type = '${activityLabel}' AND lead_type = '${leadLabel}'\``);
+    lines.push(`**Activity Type**: ${activity}`);
+    lines.push(`**Lead Type**: ${leadType}`);
+    lines.push(`→ When querying \`state_segment_daily\`, always include: \`WHERE activity_type = '${activity}' AND lead_type = '${leadType}'\``);
     lines.push("");
   }
 
@@ -198,17 +197,18 @@ const BUSINESS_GLOSSARY = `
 - **HOME** = Home insurance only
 - **RENT** = Renters insurance only
 
-### Activity Types
-- **Click** — user clicked an ad/link
-- **Lead** — user submitted a lead form
-- **Call** — user called in
+### Activity Types (values in DB are LOWERCASE)
+- **clicks** — user clicked an ad/link
+- **leads** — user submitted a lead form
+- **calls** — user called in
 
-### Lead Types
-- **CAR_INSURANCE_LEAD** — auto insurance
-- **HOME_INSURANCE_LEAD** — home/renters insurance
+### Lead Types (values in DB are LOWERCASE)
+- **auto** — auto/car insurance
+- **home** — home/renters insurance
 
 ### Activity-Lead Combinations (used as scoping filters)
 - clicks_auto, clicks_home, leads_auto, leads_home, calls_auto, calls_home
+- In SQL: \`activity_type = 'clicks' AND lead_type = 'auto'\` (always lowercase!)
 
 ### States
 - US state codes (AL, AK, AZ, ... WY). Each state has its own performance characteristics.
@@ -239,8 +239,8 @@ This is the primary table for performance monitoring (PM) analytics.
 | state | TEXT | US state code |
 | segment | TEXT | MCH, MCR, SCH, SCR, HOME, RENT |
 | channel_group_name | TEXT | Marketing channel |
-| activity_type | TEXT | Click, Lead, Call |
-| lead_type | TEXT | CAR_INSURANCE_LEAD, HOME_INSURANCE_LEAD |
+| activity_type | TEXT | clicks, leads, calls (LOWERCASE) |
+| lead_type | TEXT | auto, home (LOWERCASE) |
 | bids | DOUBLE PRECISION | Number of bids placed |
 | sold | DOUBLE PRECISION | Number of conversions (clicks/leads/calls sold) |
 | total_cost | DOUBLE PRECISION | Total spend |
