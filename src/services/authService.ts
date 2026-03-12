@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { config } from "../config.js";
-import { query, table } from "../db/bigquery.js";
+import { query, table } from "../db/index.js";
+import { VALID_MODULE_IDS, isValidModuleId } from "../modules.js";
 
 type UserRecord = {
   user_id: string;
@@ -33,9 +34,12 @@ export type SessionUser = {
 type ManagedUserRow = {
   user_id: string;
   email: string;
+  name: string | null;
   role: "admin" | "planner" | "viewer";
-  is_active: boolean;
-  last_login_at: string | null;
+  active: boolean;
+  last_login: string | null;
+  created_at: string;
+  modules: string[];
 };
 
 let authTablesReady: Promise<void> | null = null;
@@ -82,6 +86,9 @@ function validatePasswordStrength(password: string): void {
 }
 
 async function ensureAuthTablesExist(): Promise<void> {
+  // PG schema created via migration — no runtime DDL needed
+  if (config.usePg) return;
+
   if (!authTablesReady) {
     authTablesReady = (async () => {
       await query(
@@ -89,6 +96,7 @@ async function ensureAuthTablesExist(): Promise<void> {
           CREATE TABLE IF NOT EXISTS ${table("users")} (
             user_id STRING NOT NULL,
             email STRING NOT NULL,
+            name STRING,
             role STRING NOT NULL,
             is_active BOOL NOT NULL,
             created_at TIMESTAMP NOT NULL,
@@ -141,6 +149,7 @@ async function getUserByEmail(email: string): Promise<UserRecord | null> {
 }
 
 async function getCredentialsByUserId(userId: string): Promise<UserCredentialRecord | null> {
+  const castLogin = config.usePg ? "last_login_at::text" : "CAST(last_login_at AS STRING)";
   const rows = await query<UserCredentialRecord>(
     `
       SELECT
@@ -148,7 +157,7 @@ async function getCredentialsByUserId(userId: string): Promise<UserCredentialRec
         email,
         password_salt,
         password_hash,
-        CAST(last_login_at AS STRING) AS last_login_at
+        ${castLogin} AS last_login_at
       FROM ${table("user_credentials")}
       WHERE user_id = @userId
       LIMIT 1
@@ -160,6 +169,10 @@ async function getCredentialsByUserId(userId: string): Promise<UserCredentialRec
 
 async function createSession(user: SessionUser): Promise<{ token: string; user: SessionUser }> {
   const token = randomBytes(32).toString("hex");
+  const expiresExpr = config.usePg
+    ? "NOW() + INTERVAL '14 days'"
+    : "TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)";
+  const now = config.usePg ? "NOW()" : "CURRENT_TIMESTAMP()";
   await withSerializableRetry(() =>
     query(
       `
@@ -177,9 +190,9 @@ async function createSession(user: SessionUser): Promise<{ token: string; user: 
           @userId,
           @email,
           @role,
-          TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 14 DAY),
-          CURRENT_TIMESTAMP(),
-          CURRENT_TIMESTAMP()
+          ${expiresExpr},
+          ${now},
+          ${now}
         )
       `,
       {
@@ -225,47 +238,46 @@ export async function setupUserPassword(
 
   const salt = randomBytes(16).toString("hex");
   const hashed = hashPassword(password, salt);
-  await query(
-    `
-      MERGE ${table("user_credentials")} AS target
-      USING (
-        SELECT @userId AS user_id, @email AS email, @salt AS password_salt, @hashed AS password_hash
-      ) AS source
-      ON target.user_id = source.user_id
-      WHEN MATCHED THEN
-        UPDATE SET
-          email = source.email,
-          password_salt = source.password_salt,
-          password_hash = source.password_hash,
-          last_login_at = CURRENT_TIMESTAMP(),
-          updated_at = CURRENT_TIMESTAMP()
-      WHEN NOT MATCHED THEN
-        INSERT (
-          user_id,
-          email,
-          password_salt,
-          password_hash,
-          last_login_at,
-          created_at,
-          updated_at
+  if (config.usePg) {
+    await query(
+      `
+        INSERT INTO ${table("user_credentials")} (
+          user_id, email, password_salt, password_hash, last_login_at, created_at, updated_at
+        ) VALUES (
+          @userId, @email, @salt, @hashed, NOW(), NOW(), NOW()
         )
-        VALUES (
-          source.user_id,
-          source.email,
-          source.password_salt,
-          source.password_hash,
-          CURRENT_TIMESTAMP(),
-          CURRENT_TIMESTAMP(),
-          CURRENT_TIMESTAMP()
-        )
-    `,
-    {
-      userId: user.user_id,
-      email: user.email,
-      salt,
-      hashed
-    }
-  );
+        ON CONFLICT (user_id) DO UPDATE SET
+          email = EXCLUDED.email,
+          password_salt = EXCLUDED.password_salt,
+          password_hash = EXCLUDED.password_hash,
+          last_login_at = NOW(),
+          updated_at = NOW()
+      `,
+      { userId: user.user_id, email: user.email, salt, hashed }
+    );
+  } else {
+    await query(
+      `
+        MERGE ${table("user_credentials")} AS target
+        USING (
+          SELECT @userId AS user_id, @email AS email, @salt AS password_salt, @hashed AS password_hash
+        ) AS source
+        ON target.user_id = source.user_id
+        WHEN MATCHED THEN
+          UPDATE SET
+            email = source.email,
+            password_salt = source.password_salt,
+            password_hash = source.password_hash,
+            last_login_at = CURRENT_TIMESTAMP(),
+            updated_at = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN
+          INSERT (user_id, email, password_salt, password_hash, last_login_at, created_at, updated_at)
+          VALUES (source.user_id, source.email, source.password_salt, source.password_hash,
+                  CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
+      `,
+      { userId: user.user_id, email: user.email, salt, hashed }
+    );
+  }
 
   return createSession({
     userId: user.user_id,
@@ -324,7 +336,17 @@ export async function loginAdminWithCode(code: string): Promise<{ token: string;
   });
 }
 
+// ── Session cache: avoids a BQ round-trip on every authenticated request ──
+const sessionCache = new Map<string, { user: SessionUser; expiresAt: number }>();
+const SESSION_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+
 export async function validateSessionToken(token: string): Promise<SessionUser | null> {
+  // Fast-path: return from in-memory cache
+  const cached = sessionCache.get(token);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.user;
+  }
+
   await ensureAuthTablesExist();
   const rows = await query<SessionRecord>(
     `
@@ -340,6 +362,7 @@ export async function validateSessionToken(token: string): Promise<SessionUser |
 
   const session = rows[0];
   if (!session) {
+    sessionCache.delete(token);
     return null;
   }
 
@@ -354,14 +377,18 @@ export async function validateSessionToken(token: string): Promise<SessionUser |
     )
   ).catch(() => undefined);
 
-  return {
+  const user: SessionUser = {
     userId: session.user_id,
     email: session.email,
     role: session.role
   };
+
+  sessionCache.set(token, { user, expiresAt: Date.now() + SESSION_CACHE_TTL_MS });
+  return user;
 }
 
 export async function logoutSession(token: string): Promise<void> {
+  sessionCache.delete(token);
   await ensureAuthTablesExist();
   await query(
     `
@@ -372,30 +399,95 @@ export async function logoutSession(token: string): Promise<void> {
   );
 }
 
+// ── Module access ────────────────────────────────────────────────
+export async function getUserModules(userId: string): Promise<string[]> {
+  if (!config.usePg) return VALID_MODULE_IDS; // BQ: no module table, grant all
+  const rows = await query<{ module_id: string }>(
+    `SELECT module_id FROM ${table("user_modules")} WHERE user_id = @userId`,
+    { userId }
+  );
+  return rows.map((r) => r.module_id);
+}
+
+export async function setUserModules(userId: string, modules: string[]): Promise<void> {
+  const valid = modules.filter(isValidModuleId);
+  if (valid.length === 0) {
+    const error = new Error("At least one valid module is required.") as Error & { status: number };
+    error.status = 400;
+    throw error;
+  }
+  await query(`DELETE FROM ${table("user_modules")} WHERE user_id = @userId`, { userId });
+  for (const moduleId of valid) {
+    await query(
+      `INSERT INTO ${table("user_modules")} (user_id, module_id) VALUES (@userId, @moduleId)`,
+      { userId, moduleId }
+    );
+  }
+}
+
 export async function listManagedUsers(): Promise<ManagedUserRow[]> {
   await ensureAuthTablesExist();
-  return query<ManagedUserRow>(
+  const castLogin = config.usePg ? "c.last_login_at::text" : "CAST(c.last_login_at AS STRING)";
+  const castCreated = config.usePg ? "u.created_at::text" : "CAST(u.created_at AS STRING)";
+
+  if (config.usePg) {
+    // PG: use array_agg to include modules in a single query
+    type RawRow = Omit<ManagedUserRow, "modules"> & { modules: string[] | null };
+    const rows = await query<RawRow>(
+      `
+        SELECT
+          u.user_id,
+          u.email,
+          u.name,
+          u.role,
+          u.is_active AS active,
+          ${castLogin} AS last_login,
+          ${castCreated} AS created_at,
+          COALESCE(array_agg(m.module_id) FILTER (WHERE m.module_id IS NOT NULL), '{}') AS modules
+        FROM ${table("users")} AS u
+        LEFT JOIN ${table("user_credentials")} AS c
+          ON c.user_id = u.user_id
+        LEFT JOIN ${table("user_modules")} AS m
+          ON m.user_id = u.user_id
+        GROUP BY u.user_id, u.email, u.name, u.role, u.is_active, c.last_login_at, u.created_at
+        ORDER BY LOWER(u.email)
+      `
+    );
+    return rows.map((r) => ({ ...r, modules: r.modules ?? [] }));
+  }
+
+  // BQ fallback: no module table, grant all modules
+  const rows = await query<Omit<ManagedUserRow, "modules">>(
     `
       SELECT
         u.user_id,
         u.email,
+        u.name,
         u.role,
-        u.is_active,
-        CAST(c.last_login_at AS STRING) AS last_login_at
+        u.is_active AS active,
+        ${castLogin} AS last_login,
+        ${castCreated} AS created_at
       FROM ${table("users")} AS u
       LEFT JOIN ${table("user_credentials")} AS c
         ON c.user_id = u.user_id
       ORDER BY LOWER(u.email)
     `
   );
+  return rows.map((r) => ({ ...r, modules: VALID_MODULE_IDS }));
 }
 
-export async function addManagedUser(email: string): Promise<{ userId: string; email: string }> {
+export async function addManagedUser(
+  email: string,
+  opts?: { name?: string; role?: string }
+): Promise<{ userId: string; email: string }> {
   await ensureAuthTablesExist();
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) {
     fail(400, "Email is required.");
   }
+
+  const name = opts?.name?.trim() || null;
+  const role = opts?.role === "admin" ? "admin" : "planner";
 
   const existing = await getUserByEmail(normalizedEmail);
   const userId = existing?.user_id || randomUUID();
@@ -405,6 +497,7 @@ export async function addManagedUser(email: string): Promise<{ userId: string; e
         INSERT INTO ${table("users")} (
           user_id,
           email,
+          name,
           role,
           is_active,
           created_at,
@@ -413,49 +506,58 @@ export async function addManagedUser(email: string): Promise<{ userId: string; e
         VALUES (
           @userId,
           @email,
-          'planner',
+          @name,
+          @role,
           TRUE,
           CURRENT_TIMESTAMP(),
           CURRENT_TIMESTAMP()
         )
       `,
+      { userId, email: normalizedEmail, name, role }
+    );
+  }
+
+  if (config.usePg) {
+    await query(
+      `
+        INSERT INTO ${table("user_credentials")} (
+          user_id, email, password_salt, password_hash, last_login_at, created_at, updated_at
+        ) VALUES (
+          @userId, @email, NULL, NULL, NULL, NOW(), NOW()
+        )
+        ON CONFLICT (user_id) DO UPDATE SET
+          email = EXCLUDED.email,
+          updated_at = NOW()
+      `,
+      { userId, email: normalizedEmail }
+    );
+  } else {
+    await query(
+      `
+        MERGE ${table("user_credentials")} AS target
+        USING (
+          SELECT @userId AS user_id, @email AS email
+        ) AS source
+        ON target.user_id = source.user_id
+        WHEN MATCHED THEN
+          UPDATE SET
+            email = source.email,
+            updated_at = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN
+          INSERT (user_id, email, password_salt, password_hash, last_login_at, created_at, updated_at)
+          VALUES (source.user_id, source.email, NULL, NULL, NULL, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
+      `,
       { userId, email: normalizedEmail }
     );
   }
 
-  await query(
-    `
-      MERGE ${table("user_credentials")} AS target
-      USING (
-        SELECT @userId AS user_id, @email AS email
-      ) AS source
-      ON target.user_id = source.user_id
-      WHEN MATCHED THEN
-        UPDATE SET
-          email = source.email,
-          updated_at = CURRENT_TIMESTAMP()
-      WHEN NOT MATCHED THEN
-        INSERT (
-          user_id,
-          email,
-          password_salt,
-          password_hash,
-          last_login_at,
-          created_at,
-          updated_at
-        )
-        VALUES (
-          source.user_id,
-          source.email,
-          NULL,
-          NULL,
-          NULL,
-          CURRENT_TIMESTAMP(),
-          CURRENT_TIMESTAMP()
-        )
-    `,
-    { userId, email: normalizedEmail }
-  );
+  // Grant default module access (planning)
+  if (config.usePg) {
+    await query(
+      `INSERT INTO ${table("user_modules")} (user_id, module_id) VALUES (@userId, 'planning') ON CONFLICT DO NOTHING`,
+      { userId }
+    );
+  }
 
   return { userId, email: normalizedEmail };
 }
@@ -476,39 +578,41 @@ export async function resetManagedUserPassword(userId: string): Promise<void> {
     fail(404, "User not found.");
   }
 
-  await query(
-    `
-      MERGE ${table("user_credentials")} AS target
-      USING (
-        SELECT @userId AS user_id, @email AS email
-      ) AS source
-      ON target.user_id = source.user_id
-      WHEN MATCHED THEN
-        UPDATE SET
-          email = source.email,
+  if (config.usePg) {
+    await query(
+      `
+        INSERT INTO ${table("user_credentials")} (
+          user_id, email, password_salt, password_hash, last_login_at, created_at, updated_at
+        ) VALUES (
+          @userId, @email, NULL, NULL, NULL, NOW(), NOW()
+        )
+        ON CONFLICT (user_id) DO UPDATE SET
+          email = EXCLUDED.email,
           password_salt = NULL,
           password_hash = NULL,
-          updated_at = CURRENT_TIMESTAMP()
-      WHEN NOT MATCHED THEN
-        INSERT (
-          user_id,
-          email,
-          password_salt,
-          password_hash,
-          last_login_at,
-          created_at,
-          updated_at
-        )
-        VALUES (
-          source.user_id,
-          source.email,
-          NULL,
-          NULL,
-          NULL,
-          CURRENT_TIMESTAMP(),
-          CURRENT_TIMESTAMP()
-        )
-    `,
-    { userId: user.user_id, email: user.email }
-  );
+          updated_at = NOW()
+      `,
+      { userId: user.user_id, email: user.email }
+    );
+  } else {
+    await query(
+      `
+        MERGE ${table("user_credentials")} AS target
+        USING (
+          SELECT @userId AS user_id, @email AS email
+        ) AS source
+        ON target.user_id = source.user_id
+        WHEN MATCHED THEN
+          UPDATE SET
+            email = source.email,
+            password_salt = NULL,
+            password_hash = NULL,
+            updated_at = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN
+          INSERT (user_id, email, password_salt, password_hash, last_login_at, created_at, updated_at)
+          VALUES (source.user_id, source.email, NULL, NULL, NULL, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
+      `,
+      { userId: user.user_id, email: user.email }
+    );
+  }
 }

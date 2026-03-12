@@ -7,33 +7,48 @@ import {
   createPlan,
   createRun,
   deletePlan,
+  getParameterValues,
   getPlan,
   getRun,
   getRunResults,
   listPlanParameters,
   listPlans,
   updatePlan,
-  upsertParameters
+  upsertParameters,
+  upsertPlanContext
 } from "../../services/plansService.js";
+import { appendChangeLog } from "../../services/changeLogService.js";
+
+const planContextSchema = z.object({
+  activity: z.string().optional(),
+  lead_type: z.string().optional(),
+  perf_start_date: z.string().optional(),
+  perf_end_date: z.string().optional(),
+  price_start_date: z.string().optional(),
+  price_end_date: z.string().optional(),
+  qbc_clicks: z.number().optional(),
+  qbc_leads_calls: z.number().optional()
+});
 
 const createPlanSchema = z.object({
-  planName: z.string().min(1),
+  planName: z.string().min(1).optional(),
+  plan_name: z.string().min(1).optional(),
   description: z.string().optional()
-});
+}).merge(planContextSchema).refine(
+  (v) => !!(v.planName || v.plan_name),
+  { message: "planName or plan_name is required" }
+);
 
 const clonePlanSchema = z.object({
   planName: z.string().min(1).optional(),
   description: z.string().optional()
 });
 
-const updatePlanSchema = z
-  .object({
-    planName: z.string().min(1).optional(),
-    description: z.string().optional()
-  })
-  .refine((value) => value.planName !== undefined || value.description !== undefined, {
-    message: "At least one field must be provided"
-  });
+const updatePlanSchema = z.object({
+  planName: z.string().min(1).optional(),
+  plan_name: z.string().min(1).optional(),
+  description: z.string().optional()
+}).merge(planContextSchema);
 
 const parametersSchema = z.object({
   parameters: z.array(
@@ -42,7 +57,8 @@ const parametersSchema = z.object({
       value: z.string(),
       valueType: z.enum(["int", "float", "bool", "string", "json"])
     })
-  )
+  ),
+  activityLeadType: z.string().optional(),
 });
 
 const decisionsSchema = z.object({
@@ -65,7 +81,26 @@ planRoutes.get("/me", (req, res) => {
 
 planRoutes.get("/plans", async (_req, res, next) => {
   try {
-    const plans = await listPlans();
+    const rawPlans = await listPlans();
+    // Flatten plan_context_json fields onto each plan for the frontend
+    const plans = rawPlans.map((p) => {
+      let ctx: Record<string, unknown> = {};
+      if (p.plan_context_json) {
+        try { ctx = JSON.parse(p.plan_context_json); } catch { /* ignore */ }
+      }
+      return {
+        ...p,
+        activity: ctx.activity ?? "",
+        lead_type: ctx.leadType ?? "",
+        // Support both new (perfStartDate) and legacy (performanceStartDate) field names
+        perf_start_date: ctx.perfStartDate ?? ctx.performanceStartDate ?? "",
+        perf_end_date: ctx.perfEndDate ?? ctx.performanceEndDate ?? "",
+        price_start_date: ctx.priceStartDate ?? ctx.priceExplorationStartDate ?? "",
+        price_end_date: ctx.priceEndDate ?? ctx.priceExplorationEndDate ?? "",
+        qbc_clicks: Number(ctx.qbcClicks) || 0,
+        qbc_leads_calls: Number(ctx.qbcLeadsCalls) || 0
+      };
+    });
     res.json({ plans });
   } catch (error) {
     next(error);
@@ -75,11 +110,32 @@ planRoutes.get("/plans", async (_req, res, next) => {
 planRoutes.post("/plans", requireRole(["admin", "planner"]), async (req, res, next) => {
   try {
     const parsed = createPlanSchema.parse(req.body);
+    const planName = (parsed.planName || parsed.plan_name)!;
     const result = await createPlan({
-      planName: parsed.planName,
+      planName,
       description: parsed.description,
       createdBy: req.user!.userId
     });
+
+    // Persist plan context if any context fields are provided
+    if (parsed.perf_start_date || parsed.perf_end_date || parsed.qbc_clicks) {
+      await upsertPlanContext(result.planId, req.user!.userId, {
+        perfStartDate: parsed.perf_start_date ?? "",
+        perfEndDate: parsed.perf_end_date ?? "",
+        priceStartDate: parsed.price_start_date ?? "",
+        priceEndDate: parsed.price_end_date ?? "",
+        qbcClicks: parsed.qbc_clicks ?? 0,
+        qbcLeadsCalls: parsed.qbc_leads_calls ?? 0,
+        activity: parsed.activity ?? "",
+        leadType: parsed.lead_type ?? ""
+      });
+    }
+
+    appendChangeLog(
+      { userId: req.user!.userId, email: req.user!.email },
+      { objectType: "plan", objectId: result.planId, action: "create", after: { planName, description: parsed.description } }
+    ).catch(console.error);
+
     res.status(201).json(result);
   } catch (error) {
     next(error);
@@ -93,6 +149,10 @@ planRoutes.post("/plans/:planId/clone", requireRole(["admin", "planner"]), async
       planName: parsed.planName,
       description: parsed.description
     });
+    appendChangeLog(
+      { userId: req.user!.userId, email: req.user!.email },
+      { objectType: "plan", objectId: result.planId, action: "clone", after: { planName: parsed.planName }, metadata: { sourcePlanId: req.params.planId } }
+    ).catch(console.error);
     res.status(201).json(result);
   } catch (error) {
     next(error);
@@ -115,10 +175,42 @@ planRoutes.get("/plans/:planId", async (req, res, next) => {
 planRoutes.put("/plans/:planId", requireRole(["admin", "planner"]), async (req, res, next) => {
   try {
     const parsed = updatePlanSchema.parse(req.body || {});
-    await updatePlan(req.params.planId, {
-      planName: parsed.planName,
-      description: parsed.description
-    });
+    const planName = parsed.planName || parsed.plan_name;
+    const before = await getPlan(req.params.planId);
+
+    // Update plan name/description if provided
+    if (planName || parsed.description !== undefined) {
+      await updatePlan(req.params.planId, {
+        planName,
+        description: parsed.description
+      });
+    }
+
+    // Persist plan context if any context fields are provided
+    if (
+      parsed.perf_start_date !== undefined ||
+      parsed.perf_end_date !== undefined ||
+      parsed.qbc_clicks !== undefined ||
+      parsed.activity !== undefined ||
+      parsed.lead_type !== undefined
+    ) {
+      await upsertPlanContext(req.params.planId, req.user!.userId, {
+        perfStartDate: parsed.perf_start_date ?? "",
+        perfEndDate: parsed.perf_end_date ?? "",
+        priceStartDate: parsed.price_start_date ?? "",
+        priceEndDate: parsed.price_end_date ?? "",
+        qbcClicks: parsed.qbc_clicks ?? 0,
+        qbcLeadsCalls: parsed.qbc_leads_calls ?? 0,
+        activity: parsed.activity ?? "",
+        leadType: parsed.lead_type ?? ""
+      });
+    }
+
+    appendChangeLog(
+      { userId: req.user!.userId, email: req.user!.email },
+      { objectType: "plan", objectId: req.params.planId, action: "update", before: before ? { plan_name: before.plan_name, description: before.description } : undefined, after: { planName, description: parsed.description } }
+    ).catch(console.error);
+
     res.json({ ok: true });
   } catch (error) {
     next(error);
@@ -127,7 +219,12 @@ planRoutes.put("/plans/:planId", requireRole(["admin", "planner"]), async (req, 
 
 planRoutes.delete("/plans/:planId", requireRole(["admin", "planner"]), async (req, res, next) => {
   try {
+    const before = await getPlan(req.params.planId);
     await deletePlan(req.params.planId);
+    appendChangeLog(
+      { userId: req.user!.userId, email: req.user!.email },
+      { objectType: "plan", objectId: req.params.planId, action: "delete", before: before ? { plan_name: before.plan_name, description: before.description, status: before.status } : undefined }
+    ).catch(console.error);
     res.json({ ok: true });
   } catch (error) {
     next(error);
@@ -136,7 +233,12 @@ planRoutes.delete("/plans/:planId", requireRole(["admin", "planner"]), async (re
 
 planRoutes.get("/plans/:planId/parameters", async (req, res, next) => {
   try {
-    const parameters = await listPlanParameters(req.params.planId);
+    const rows = await listPlanParameters(req.params.planId);
+    const parameters = rows.map((r) => ({
+      key: r.param_key,
+      value: r.param_value,
+      valueType: r.value_type,
+    }));
     res.json({ parameters });
   } catch (error) {
     next(error);
@@ -146,7 +248,17 @@ planRoutes.get("/plans/:planId/parameters", async (req, res, next) => {
 planRoutes.put("/plans/:planId/parameters", requireRole(["admin", "planner"]), async (req, res, next) => {
   try {
     const parsed = parametersSchema.parse(req.body);
+    const paramKeys = parsed.parameters.map((p) => p.key);
+    const beforeValues = await getParameterValues(req.params.planId, paramKeys);
     await upsertParameters(req.params.planId, req.user!.userId, parsed.parameters);
+    const afterValues: Record<string, string> = {};
+    for (const p of parsed.parameters) afterValues[p.key] = p.value;
+    const meta: Record<string, unknown> = { paramKeys };
+    if (parsed.activityLeadType) meta.activityLeadType = parsed.activityLeadType;
+    appendChangeLog(
+      { userId: req.user!.userId, email: req.user!.email },
+      { objectType: "plan_parameters", objectId: req.params.planId, action: "update", before: beforeValues, after: afterValues, metadata: meta }
+    ).catch(console.error);
     res.json({ ok: true });
   } catch (error) {
     next(error);
@@ -157,6 +269,10 @@ planRoutes.post("/plans/:planId/decisions", requireRole(["admin", "planner"]), a
   try {
     const parsed = decisionsSchema.parse(req.body);
     const result = await appendDecisions(req.params.planId, req.user!.userId, parsed.decisions);
+    appendChangeLog(
+      { userId: req.user!.userId, email: req.user!.email },
+      { objectType: "plan_decision", objectId: req.params.planId, action: "create", after: parsed.decisions }
+    ).catch(console.error);
     res.status(201).json(result);
   } catch (error) {
     next(error);

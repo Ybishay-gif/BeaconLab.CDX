@@ -2,11 +2,13 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   getUserLoginState,
+  getUserModules,
   loginAdminWithCode,
   loginUser,
   logoutSession,
   setupUserPassword
 } from "../../services/authService.js";
+import { VALID_MODULE_IDS } from "../../modules.js";
 
 const adminLoginSchema = z.object({
   code: z.string().min(1)
@@ -32,7 +34,8 @@ authRoutes.post("/auth/admin-login", async (req, res, next) => {
   try {
     const parsed = adminLoginSchema.parse(req.body);
     const session = await loginAdminWithCode(parsed.code);
-    res.json(session);
+    // Admin gets access to all modules
+    res.json({ ...session, user: { ...session.user, modules: VALID_MODULE_IDS } });
   } catch (error) {
     next(error);
   }
@@ -52,7 +55,8 @@ authRoutes.post("/auth/user-setup-password", async (req, res, next) => {
   try {
     const parsed = userSetupPasswordSchema.parse(req.body);
     const session = await setupUserPassword(parsed.email, parsed.password);
-    res.json(session);
+    const modules = await getUserModules(session.user.userId);
+    res.json({ ...session, user: { ...session.user, modules } });
   } catch (error) {
     next(error);
   }
@@ -62,7 +66,8 @@ authRoutes.post("/auth/user-login", async (req, res, next) => {
   try {
     const parsed = userLoginSchema.parse(req.body);
     const session = await loginUser(parsed.email, parsed.password);
-    res.json(session);
+    const modules = await getUserModules(session.user.userId);
+    res.json({ ...session, user: { ...session.user, modules } });
   } catch (error) {
     next(error);
   }

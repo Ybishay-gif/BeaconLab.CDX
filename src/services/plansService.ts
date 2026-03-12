@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { query, table } from "../db/bigquery.js";
+import { query, table } from "../db/index.js";
+import { config } from "../config.js";
 
 type PlanStatus = "draft" | "ready" | "archived";
 
@@ -63,14 +64,14 @@ export async function listPlans(): Promise<PlanRow[]> {
         ps.plan_strategy_json
       FROM ${table("plans")} p
       LEFT JOIN (
-        SELECT plan_id, ANY_VALUE(param_value) AS plan_context_json
+        SELECT plan_id, MAX(param_value) AS plan_context_json
         FROM ${table("plan_parameters")}
         WHERE param_key = 'plan_context_config'
         GROUP BY plan_id
       ) pc
         ON pc.plan_id = p.plan_id
       LEFT JOIN (
-        SELECT plan_id, ANY_VALUE(param_value) AS plan_strategy_json
+        SELECT plan_id, MAX(param_value) AS plan_strategy_json
         FROM ${table("plan_parameters")}
         WHERE param_key = 'plan_strategy_config'
         GROUP BY plan_id
@@ -151,7 +152,7 @@ export async function clonePlan(
       INSERT INTO ${table("plan_decisions")}
       (decision_id, plan_id, decision_type, state, channel, decision_value, reason, created_by, created_at)
       SELECT
-        GENERATE_UUID(),
+        ${config.usePg ? "gen_random_uuid()" : "GENERATE_UUID()"},
         @newPlanId,
         decision_type,
         state,
@@ -193,6 +194,23 @@ export async function listPlanParameters(planId: string): Promise<PlanParameterR
     `,
     { planId }
   );
+}
+
+export async function getParameterValues(
+  planId: string,
+  keys: string[]
+): Promise<Record<string, string>> {
+  if (keys.length === 0) return {};
+  const placeholders = keys.map((_, i) => `@key${i}`).join(", ");
+  const params: Record<string, unknown> = { planId };
+  keys.forEach((k, i) => { params[`key${i}`] = k; });
+  const rows = await query<{ param_key: string; param_value: string }>(
+    `SELECT param_key, param_value FROM ${table("plan_parameters")} WHERE plan_id = @planId AND param_key IN (${placeholders})`,
+    params
+  );
+  const result: Record<string, string> = {};
+  for (const r of rows) result[r.param_key] = r.param_value;
+  return result;
 }
 
 export async function updatePlan(planId: string, input: UpdatePlanInput): Promise<void> {
@@ -240,32 +258,71 @@ export async function upsertParameters(
   }
 
   await runBatched(parameters, async (parameter) => {
-    await query(
-      `
-        MERGE ${table("plan_parameters")} T
-        USING (
-          SELECT @planId AS plan_id, @paramKey AS param_key
-        ) S
-        ON T.plan_id = S.plan_id AND T.param_key = S.param_key
-        WHEN MATCHED THEN
-          UPDATE SET
-            param_value = @paramValue,
-            value_type = @valueType,
-            updated_by = @updatedBy,
-            updated_at = CURRENT_TIMESTAMP()
-        WHEN NOT MATCHED THEN
-          INSERT (plan_id, param_key, param_value, value_type, updated_by, updated_at)
-          VALUES (@planId, @paramKey, @paramValue, @valueType, @updatedBy, CURRENT_TIMESTAMP())
-      `,
-      {
-        planId,
-        paramKey: parameter.key,
-        paramValue: parameter.value,
-        valueType: parameter.valueType,
-        updatedBy: userId
-      }
-    );
+    const params = {
+      planId,
+      paramKey: parameter.key,
+      paramValue: parameter.value,
+      valueType: parameter.valueType,
+      updatedBy: userId
+    };
+
+    if (config.usePg) {
+      await query(
+        `
+          INSERT INTO ${table("plan_parameters")}
+          (plan_id, param_key, param_value, value_type, updated_by, updated_at)
+          VALUES (@planId, @paramKey, @paramValue, @valueType, @updatedBy, NOW())
+          ON CONFLICT (plan_id, param_key) DO UPDATE SET
+            param_value = EXCLUDED.param_value,
+            value_type = EXCLUDED.value_type,
+            updated_by = EXCLUDED.updated_by,
+            updated_at = NOW()
+        `,
+        params
+      );
+    } else {
+      await query(
+        `
+          MERGE ${table("plan_parameters")} T
+          USING (
+            SELECT @planId AS plan_id, @paramKey AS param_key
+          ) S
+          ON T.plan_id = S.plan_id AND T.param_key = S.param_key
+          WHEN MATCHED THEN
+            UPDATE SET
+              param_value = @paramValue,
+              value_type = @valueType,
+              updated_by = @updatedBy,
+              updated_at = CURRENT_TIMESTAMP()
+          WHEN NOT MATCHED THEN
+            INSERT (plan_id, param_key, param_value, value_type, updated_by, updated_at)
+            VALUES (@planId, @paramKey, @paramValue, @valueType, @updatedBy, CURRENT_TIMESTAMP())
+        `,
+        params
+      );
+    }
   });
+
+}
+
+export async function upsertPlanContext(
+  planId: string,
+  userId: string,
+  context: {
+    perfStartDate: string;
+    perfEndDate: string;
+    priceStartDate: string;
+    priceEndDate: string;
+    qbcClicks: number;
+    qbcLeadsCalls: number;
+    activity: string;
+    leadType: string;
+  }
+): Promise<void> {
+  const contextJson = JSON.stringify(context);
+  await upsertParameters(planId, userId, [
+    { key: "plan_context_config", value: contextJson, valueType: "json" }
+  ]);
 }
 
 export async function appendDecisions(

@@ -44,7 +44,13 @@
   - Price exploration
   - Plan merged analysis
   - Strategy analysis
-  - Plans comparison (frontend tab, built from strategy-analysis endpoint across plans/scopes)
+  - Plans comparison — two modes:
+    - **Plans mode**: compare overall KPIs across all plans (each plan = one row). Uses each plan's own dates, activity type, and strategy. Not filtered by sidebar plan/activity selectors.
+    - **Activity & Lead Type mode**: select a single plan, then compare its overall KPIs across all 6 activity/lead type combinations (each combo = one row). Not filtered by sidebar plan/activity selectors.
+    - Columns: Plan Name (or Activity & Lead Type), Target COR, Bids, Sold, Total Spend, CPC, WR, Binds, Current CPB, Expected CPB, Q2B, Performance, ROE, COR, Additional Clicks, Additional Binds, WR Uplift, CPC Uplift, CPB Uplift, Expected Cost, Additional Budget
+    - Date range picker independent of sidebar (own date selector)
+    - Backend endpoint: `GET /api/analytics/plans-comparison` returns pre-computed rows for all plans or activity types
+    - This is the only analytics screen that ignores the sidebar plan and activity/lead type filters
 - Admin utilities:
   - User management
   - Targets APIs

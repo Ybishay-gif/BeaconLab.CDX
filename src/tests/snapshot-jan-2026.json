@@ -1,0 +1,26 @@
+{
+  "description": "January 2026 clicks_auto data snapshot — verified accurate 2026-03-09",
+  "params": {
+    "startDate": "2026-01-01",
+    "endDate": "2026-01-31",
+    "activityLeadType": "clicks_auto",
+    "qbc": 185
+  },
+  "state_level": {
+    "AL": { "bids": 385708, "sold": 6524, "total_cost": 136867.82, "binds": 80, "scored_policies": 77, "cpb": 1710.85, "performance": 0.9811, "roe": -0.2981, "combined_ratio": 1.1678, "mrltv": 1149.41 },
+    "AZ": { "bids": 566723, "sold": 24780, "total_cost": 771179.20, "binds": 518, "scored_policies": 508, "cpb": 1488.76, "performance": 1.0819, "roe": -0.3602, "combined_ratio": 1.1840, "mrltv": 674.06 },
+    "CO": { "bids": 306840, "sold": 5932, "total_cost": 237544.72, "binds": 72, "scored_policies": 70, "cpb": 3299.23, "performance": 0.7025, "roe": -0.3027, "combined_ratio": 1.1311, "mrltv": 2742.17 },
+    "CT": { "bids": 70190, "sold": 4657, "total_cost": 149540.88, "binds": 63, "scored_policies": 48, "cpb": 2373.66, "performance": 0.8396, "roe": -0.1407, "combined_ratio": 1.1141, "mrltv": 2014.21 },
+    "FL": { "bids": 878704, "sold": 6502, "total_cost": 146549.73, "binds": 60, "scored_policies": 60, "cpb": 2442.50, "performance": 0.7319, "roe": -0.2525, "combined_ratio": 1.1378, "mrltv": 1669.64 }
+  },
+  "state_segment_level": {
+    "AL|MCH": { "bids": 122513, "sold": 3544, "total_cost": 105013.22, "binds": 53, "scored_policies": 50, "cpb": 1981.38, "performance": 1.0349, "roe": -0.2331, "combined_ratio": 1.1300, "mrltv": 1485.02 },
+    "AL|MCR": { "bids": 63232, "sold": 606, "total_cost": 12485.45, "binds": 7, "scored_policies": 7, "cpb": 1783.64, "performance": 0.8418, "roe": -0.2246, "combined_ratio": 1.1316, "mrltv": 1005.81 },
+    "AL|SCH": { "bids": 146344, "sold": 2036, "total_cost": 16199.11, "binds": 16, "scored_policies": 16, "cpb": 1012.44, "performance": 0.7588, "roe": -0.9769, "combined_ratio": 1.5616, "mrltv": 362.20 },
+    "AL|SCR": { "bids": 53619, "sold": 338, "total_cost": 3170.04, "binds": 4, "scored_policies": 4, "cpb": 792.51, "performance": 0.8833, "roe": -0.4497, "combined_ratio": 1.2660, "mrltv": 354.41 },
+    "AZ|MCH": { "bids": 167612, "sold": 11175, "total_cost": 509143.89, "binds": 268, "scored_policies": 264, "cpb": 1899.79, "performance": 1.1633, "roe": -0.3096, "combined_ratio": 1.1576, "mrltv": 929.27 },
+    "AZ|MCR": { "bids": 101701, "sold": 1466, "total_cost": 42837.60, "binds": 33, "scored_policies": 31, "cpb": 1298.11, "performance": 1.2393, "roe": -0.3570, "combined_ratio": 1.1838, "mrltv": 521.91 },
+    "AZ|SCH": { "bids": 214851, "sold": 10185, "total_cost": 187623.52, "binds": 168, "scored_policies": 165, "cpb": 1116.81, "performance": 0.8038, "roe": -0.5510, "combined_ratio": 1.2843, "mrltv": 390.52 },
+    "AZ|SCR": { "bids": 82559, "sold": 1954, "total_cost": 31574.19, "binds": 49, "scored_policies": 48, "cpb": 644.37, "performance": 1.2063, "roe": -0.3049, "combined_ratio": 1.1556, "mrltv": 343.34 }
+  }
+}
