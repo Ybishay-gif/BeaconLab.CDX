@@ -57,19 +57,15 @@ function buildPlanContextSection(ctx: PlanContextInput): string {
     lines.push("");
   }
 
-  // QBC values
-  if (ctx.qbcClicks != null && ctx.qbcClicks > 0) {
-    lines.push(`**QBC (Quote/Bid Cost) for Clicks**: $${ctx.qbcClicks}`);
-  }
-  if (ctx.qbcLeadsCalls != null && ctx.qbcLeadsCalls > 0) {
-    lines.push(`**QBC for Leads/Calls**: $${ctx.qbcLeadsCalls}`);
-  }
+  // QBC values — ALWAYS inject, even when 0 (0 is a valid QBC value, not the same as "unknown")
+  const qbcClicks = ctx.qbcClicks ?? 0;
+  const qbcLeadsCalls = ctx.qbcLeadsCalls ?? 0;
+  lines.push(`**QBC (Quote/Bid Cost) for Clicks**: $${qbcClicks}`);
+  lines.push(`**QBC for Leads/Calls**: $${qbcLeadsCalls}`);
   if (ctx.activityLeadType) {
     const activity = ctx.activityLeadType.split("_")[0];
-    const qbc = activity === "clicks" ? (ctx.qbcClicks ?? 0) : (ctx.qbcLeadsCalls ?? 0);
-    if (qbc > 0) {
-      lines.push(`→ For ROE and COR calculations, use QBC = ${qbc} (based on current activity type "${activity}")`);
-    }
+    const qbc = activity === "clicks" ? qbcClicks : qbcLeadsCalls;
+    lines.push(`→ **For ROE and COR calculations, use QBC = ${qbc}** (based on current activity type "${activity}"). Do NOT use the 1.0 default from the examples — use exactly ${qbc}.`);
   }
 
   lines.push("");
@@ -549,8 +545,8 @@ WHERE activity_type = 'leads' AND lead_type = 'auto'
 GROUP BY state
 \`\`\`
 
-## Pattern 2 — ROE Calculation (needs QBC from plan context)
-If QBC is in the plan context, use it. Otherwise default to 1.0 and mention you assumed it.
+## Pattern 2 — ROE Calculation (MUST use QBC from plan context)
+**CRITICAL**: Always use the QBC value from the Active Plan Context section above. If it says "use QBC = 0", use 0. NEVER assume 1.0.
 \`\`\`sql
 SELECT
   state,
@@ -561,7 +557,7 @@ SELECT
     (SUM(avg_profit_sum) / SUM(scored_policies))
     - 0.8 * (
       (SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81
-      + 1.0  -- QBC: replace with actual value from plan context
+      + 0  -- ← REPLACE with the QBC value from Active Plan Context
     )
   ) / (SUM(avg_equity_sum) / SUM(scored_policies))
   END AS roe
@@ -570,7 +566,7 @@ WHERE activity_type = 'leads' AND lead_type = 'auto'
 GROUP BY state
 \`\`\`
 
-## Pattern 3 — COR Calculation
+## Pattern 3 — COR Calculation (MUST use QBC from plan context)
 \`\`\`sql
 SELECT
   state,
@@ -578,7 +574,7 @@ SELECT
   CASE WHEN SUM(scored_policies) = 0 OR SUM(lifetime_premium_sum) = 0 THEN NULL
   ELSE (
     (SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81
-    + 1.0  -- QBC: replace with actual value
+    + 0  -- ← REPLACE with the QBC value from Active Plan Context
     + (SUM(lifetime_cost_sum) / SUM(scored_policies))
   ) / (SUM(lifetime_premium_sum) / SUM(scored_policies))
   END AS cor
@@ -600,12 +596,12 @@ WITH perf AS (
     CASE WHEN SUM(scored_policies) = 0 OR SUM(avg_equity_sum) = 0 THEN NULL
     ELSE (
       (SUM(avg_profit_sum) / SUM(scored_policies))
-      - 0.8 * ((SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81 + 1.0)
+      - 0.8 * ((SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81 + 0)  -- ← QBC from plan context
     ) / (SUM(avg_equity_sum) / SUM(scored_policies))
     END AS roe,
     CASE WHEN SUM(scored_policies) = 0 OR SUM(lifetime_premium_sum) = 0 THEN NULL
     ELSE (
-      (SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81 + 1.0
+      (SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81 + 0  -- ← QBC from plan context
       + (SUM(lifetime_cost_sum) / SUM(scored_policies))
     ) / (SUM(lifetime_premium_sum) / SUM(scored_policies))
     END AS cor
@@ -669,12 +665,12 @@ WITH perf AS (
     CASE WHEN SUM(scored_policies) = 0 OR SUM(avg_equity_sum) = 0 THEN NULL
     ELSE (
       (SUM(avg_profit_sum) / SUM(scored_policies))
-      - 0.8 * ((SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81 + 1.0)
+      - 0.8 * ((SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81 + 0)  -- ← QBC from plan context
     ) / (SUM(avg_equity_sum) / SUM(scored_policies))
     END AS roe,
     CASE WHEN SUM(scored_policies) = 0 OR SUM(lifetime_premium_sum) = 0 THEN NULL
     ELSE (
-      (SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81 + 1.0
+      (SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81 + 0  -- ← QBC from plan context
       + (SUM(lifetime_cost_sum) / SUM(scored_policies))
     ) / (SUM(lifetime_premium_sum) / SUM(scored_policies))
     END AS cor
@@ -725,7 +721,7 @@ LIMIT 20
 5. \`price_exploration_daily\` uses \`date\` and \`total_spend\`; \`state_segment_daily\` uses \`event_date\` and \`total_cost\`
 6. The \`targets\` table has \`activity_lead_type\` (combined: 'leads_auto'), NOT separate activity_type / lead_type columns
 7. Cast to ::numeric before ROUND() in PostgreSQL (e.g., \`ROUND(value::numeric, 2)\`)
-8. When the plan context provides a QBC value, always use it instead of the 1.0 default
+8. **ALWAYS use the exact QBC value from the Active Plan Context section** — even if it is 0. QBC = 0 is valid and common. NEVER default to 1.0 unless there is no plan context at all.
 9. When the plan context provides activity_type and lead_type, always filter by them
 10. Strategy rules (COR targets, growth strategies) are stored as JSON in plan_parameters — they cannot be queried directly with SQL. If the user asks about strategy-defined COR targets, check the targets table's \`target_cor\` column as a fallback, or explain that COR targets come from plan configuration.
 `.trim();
