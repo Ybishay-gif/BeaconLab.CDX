@@ -3,6 +3,14 @@ import { config } from "../config.js";
 import { normalizeActivityScopeKey, splitCombinedFilter } from "./shared/activityScope.js";
 import { buildCombinedRatioSql, buildRoeSql } from "./shared/kpiSql.js";
 import { cached, buildCacheKey } from "../cache.js";
+import {
+  getSSPFromDailyPG,
+  listSSPFiltersPG,
+  listPEFiltersPG,
+  getPEBQviaPG,
+  listPlanMergedFiltersPG,
+  getPlanMergedPG,
+} from "./pgAnalyticsService.js";
 
 const RAW_CROSS_TACTIC_TABLE = config.rawCrossTacticTable;
 
@@ -647,7 +655,7 @@ async function getPriceDecisionOverridesForPlan(
 }
 
 
-function normalizeFilters(filters: StateSegmentFilters) {
+export function normalizeFilters(filters: StateSegmentFilters) {
   const states = (filters.states ?? []).map((value) => value.trim()).filter(Boolean);
   const segments = (filters.segments ?? []).map((value) => value.trim().toUpperCase()).filter(Boolean);
   const channelGroups = (filters.channelGroups ?? []).map((value) => value.trim()).filter(Boolean);
@@ -669,7 +677,7 @@ function normalizeFilters(filters: StateSegmentFilters) {
   };
 }
 
-function normalizePriceExplorationFilters(filters: PriceExplorationFilters) {
+export function normalizePriceExplorationFilters(filters: PriceExplorationFilters) {
   const states = (filters.states ?? []).map((value) => value.trim()).filter(Boolean);
   const channelGroups = (filters.channelGroups ?? []).map((value) => value.trim()).filter(Boolean);
   const combined = splitCombinedFilter(filters.activityLeadType);
@@ -693,7 +701,7 @@ function normalizePriceExplorationFilters(filters: PriceExplorationFilters) {
   };
 }
 
-function normalizePlanMergedFilters(filters: PlanMergedFilters) {
+export function normalizePlanMergedFilters(filters: PlanMergedFilters) {
   const states = (filters.states ?? []).map((value) => value.trim().toUpperCase()).filter(Boolean);
   const segments = (filters.segments ?? []).map((value) => value.trim().toUpperCase()).filter(Boolean);
   const channelGroups = (filters.channelGroups ?? []).map((value) => value.trim()).filter(Boolean);
@@ -720,6 +728,7 @@ function normalizePlanMergedFilters(filters: PlanMergedFilters) {
 
 export async function listStateSegmentFilters(filters: StateSegmentFilters): Promise<FilterOptionsRow> {
   const normalized = normalizeFilters(filters);
+  if (config.usePgAnalytics) return listSSPFiltersPG(normalized);
   return listStateSegmentFiltersFromDaily(normalized);
 }
 
@@ -732,7 +741,7 @@ const VIEW_DIMENSIONS: Record<string, string[]> = {
   state_segment_channel: ["state", "segment", "channel_group_name"],
 };
 
-async function getStateSegmentPerformanceFromDaily(
+export async function getStateSegmentPerformanceFromDaily(
   filters: StateSegmentFilters,
   normalized: ReturnType<typeof normalizeFilters>
 ): Promise<StateSegmentPerformanceRow[]> {
@@ -821,7 +830,7 @@ async function getStateSegmentPerformanceFromDaily(
   ));
 }
 
-async function listStateSegmentFiltersFromDaily(
+export async function listStateSegmentFiltersFromDaily(
   normalized: ReturnType<typeof normalizeFilters>
 ): Promise<FilterOptionsRow> {
   const cacheKey = buildCacheKey("ssp-filters", {
@@ -878,6 +887,7 @@ export async function getStateSegmentPerformance(
   filters: StateSegmentFilters
 ): Promise<StateSegmentPerformanceRow[]> {
   const normalized = normalizeFilters(filters);
+  if (config.usePgAnalytics) return getSSPFromDailyPG(filters, normalized);
   return getStateSegmentPerformanceFromDaily(filters, normalized);
 }
 
@@ -885,6 +895,7 @@ export async function listPriceExplorationFilters(
   filters: Pick<PriceExplorationFilters, "startDate" | "endDate" | "activityLeadType">
 ): Promise<{ states: string[]; channelGroups: string[] }> {
   const normalized = normalizePriceExplorationFilters(filters);
+  if (config.usePgAnalytics) return listPEFiltersPG(normalized);
 
   const cacheKey = buildCacheKey("pe-filters", {
     startDate: normalized.startDate,
@@ -961,7 +972,7 @@ export async function listPriceExplorationFilters(
  * Strategy rules and PE decisions are applied AFTER this function returns, so
  * user changes take effect immediately without cache invalidation.
  */
-async function getPriceExplorationBQ(
+export async function getPriceExplorationBQ(
   normalized: ReturnType<typeof normalizePriceExplorationFilters>
 ): Promise<PriceExplorationRow[]> {
   const cacheKey = buildCacheKey("pe-bq", {
@@ -1734,8 +1745,10 @@ export async function getPriceExploration(
 ): Promise<PriceExplorationRow[]> {
   const normalized = normalizePriceExplorationFilters(filters);
 
-  // BQ data from cache (or fresh on miss); strategy rules always read fresh from PG
-  const cachedRows = await getPriceExplorationBQ(normalized);
+  // BQ data from cache (or PG if flag is on); strategy rules always read fresh from PG
+  const cachedRows = config.usePgAnalytics
+    ? await getPEBQviaPG(normalized)
+    : await getPriceExplorationBQ(normalized);
   // Deep-copy so the cached array is never mutated (recommended_testing_point is set in-place)
   const rows = cachedRows.map((row) => ({ ...row }));
 
@@ -1829,6 +1842,7 @@ export async function listPlanMergedFilters(
   statSig: string[];
 }> {
   const normalized = normalizePlanMergedFilters(filters);
+  if (config.usePgAnalytics) return listPlanMergedFiltersPG(normalized);
 
   const cacheKey = buildCacheKey("pm-filters", {
     startDate: normalized.startDate,
@@ -1896,6 +1910,7 @@ export async function getPlanMergedAnalytics(
   filters: PlanMergedFilters
 ): Promise<PlanMergedRow[]> {
   const normalized = normalizePlanMergedFilters(filters);
+  if (config.usePgAnalytics) return getPlanMergedPG(normalized);
 
   const cacheKey = buildCacheKey("pm", {
     startDate: normalized.startDate,

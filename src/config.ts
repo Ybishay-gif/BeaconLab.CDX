@@ -25,4 +25,7 @@ export const config = {
   // PostgreSQL — runtime DB (BQ kept only for daily sync)
   usePg: process.env.USE_PG === "true",
   cloudSqlConnectionName: process.env.CLOUD_SQL_CONNECTION_NAME || "",
+
+  // Shadow mode: when true, cached BQ analytics functions read from PG instead
+  usePgAnalytics: process.env.USE_PG_ANALYTICS === "true",
 };
