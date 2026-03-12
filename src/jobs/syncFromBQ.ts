@@ -8,6 +8,7 @@
  * Tables synced:
  *   - state_segment_daily
  *   - targets_perf_daily
+ *   - price_exploration_daily
  */
 
 import { bigquery, table as bqTable } from "../db/bigquery.js";
@@ -44,6 +45,16 @@ const TARGETS_PERF_DAILY_COLS = [
   "activity_type", "lead_type", "sold", "binds", "scored_policies",
   "price_sum", "target_cpb_sum", "lifetime_premium_sum", "lifetime_cost_sum",
   "avg_profit_sum", "avg_equity_sum", "refreshed_at",
+] as const;
+
+const PRICE_EXPLORATION_DAILY_COLS = [
+  "date", "channel_group_name", "state", "price_adjustment_percent",
+  "opps", "bids", "total_impressions", "avg_position", "sold",
+  "win_rate", "avg_bid", "cpc", "total_spend", "click_to_quote",
+  "quote_start_rate", "number_of_quote_started", "number_of_quotes",
+  "stat_sig", "stat_sig_channel_group", "cpc_uplift",
+  "cpc_uplift_channelgroup", "win_rate_uplift",
+  "win_rate_uplift_channelgroup", "additional_clicks", "refreshed_at",
 ] as const;
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -86,13 +97,15 @@ function buildInsertBatch(tableName: string, cols: readonly string[], rows: Reco
  */
 async function syncTable(
   tableName: string,
-  bqSql: string
+  bqSql: string,
+  cols?: readonly string[],
 ): Promise<SyncTableResult> {
   const t0 = Date.now();
   try {
-    const cols = tableName === "targets_perf_daily"
-      ? TARGETS_PERF_DAILY_COLS
-      : STATE_SEGMENT_DAILY_COLS;
+    const colDefs = cols
+      ?? (tableName === "targets_perf_daily" ? TARGETS_PERF_DAILY_COLS
+        : tableName === "price_exploration_daily" ? PRICE_EXPLORATION_DAILY_COLS
+        : STATE_SEGMENT_DAILY_COLS);
 
     // Stream all rows from BQ first
     const stream = bigquery.createQueryStream({ query: bqSql, useLegacySql: false });
@@ -107,7 +120,7 @@ async function syncTable(
       await exec(`TRUNCATE ${tableName}`);
       for (let i = 0; i < allRows.length; i += BATCH_SIZE) {
         const batch = allRows.slice(i, i + BATCH_SIZE);
-        await exec(buildInsertBatch(tableName, cols, batch));
+        await exec(buildInsertBatch(tableName, colDefs, batch));
       }
     });
 
@@ -179,7 +192,23 @@ export async function syncAllFromBQ(): Promise<SyncResult> {
      GROUP BY 1, 2, 3, 4, 5, 6, 7`
   );
 
-  const results = [ssd, tpd];
+  // Sync price_exploration_daily from BQ pre-aggregated table
+  const ped = await syncTable(
+    "price_exploration_daily",
+    `SELECT
+       date, channel_group_name, state, price_adjustment_percent,
+       opps, bids, total_impressions, avg_position, sold,
+       win_rate, avg_bid, cpc, total_spend, click_to_quote,
+       quote_start_rate, number_of_quote_started, number_of_quotes,
+       stat_sig, stat_sig_channel_group, cpc_uplift,
+       cpc_uplift_channelgroup, win_rate_uplift,
+       win_rate_uplift_channelgroup, additional_clicks,
+       CURRENT_TIMESTAMP() AS refreshed_at
+     FROM ${bqTable("price_exploration_daily")}
+     WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)`
+  );
+
+  const results = [ssd, tpd, ped];
   const ok = results.every((r) => !r.error);
   return { ok, totalMs: Date.now() - t0, tables: results };
 }

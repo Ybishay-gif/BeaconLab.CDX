@@ -69,7 +69,8 @@ function buildPlanContextSection(ctx: PlanContextInput): string {
   }
 
   lines.push("");
-  lines.push("**IMPORTANT**: Always apply the activity type, lead type, and date range filters above in your SQL queries. These reflect the user's current view settings.");
+  lines.push("**IMPORTANT**: Always apply the activity type, lead type, and date range filters in your SQL queries for \`state_segment_daily\` and \`targets_perf_daily\`. These reflect the user's current view settings.");
+  lines.push("**EXCEPTION**: The \`price_exploration_daily\` table does NOT have activity_type, lead_type, or segment columns. Do NOT use these filters on PE queries. PE data is aggregated across all activity types.");
 
   return lines.join("\n");
 }
@@ -257,10 +258,17 @@ Require \`scored_policies > 0\` for ROE/COR calculations.
 ## price_exploration_daily ← Price exploration (PE) data
 One row per date × state × channel × testing_point. Contains pre-computed uplifts.
 
+**⚠️ CRITICAL LIMITATIONS**:
+- This table does **NOT** have \`activity_type\`, \`lead_type\`, or \`segment\` columns. Do NOT filter by these.
+- Data is aggregated across ALL activity types and lead types. It is not possible to filter by clicks/leads/calls or auto/home.
+- The \`channel_group_name\` column often **embeds the segment code** in the name, e.g., "Group 100 MCH", "EverQuote MCR", "SmartFinancial SCH".
+- When a user mentions a channel AND a segment (e.g., "Group 100 MCH"), search with ILIKE: \`WHERE channel_group_name ILIKE '%Group 100%' AND channel_group_name ILIKE '%MCH%'\`
+- When a user mentions only a channel name (e.g., "Group 100"), use: \`WHERE channel_group_name ILIKE '%Group 100%'\` — this may return rows for multiple segments (MCH, MCR, SCH, SCR).
+
 | Column | Type | Description |
 |--------|------|-------------|
 | date | DATE | Date (NOTE: "date" not "event_date") |
-| channel_group_name | TEXT | Marketing channel |
+| channel_group_name | TEXT | Marketing channel (often includes segment: "Group 100 MCH") |
 | state | TEXT | US state code |
 | price_adjustment_percent | INTEGER | Testing point (-20 to +20, 0 = baseline) |
 | opps | BIGINT | Opportunities |
@@ -287,6 +295,7 @@ One row per date × state × channel × testing_point. Contains pre-computed upl
 **Key usage**: Column is "date" (not "event_date"), "total_spend" (not "total_cost").
 Testing point 0 = baseline. Positive TPs = higher price, negative = lower price.
 \`additional_clicks\` is already computed in the table.
+**Do NOT use activity_type, lead_type, or segment in PE queries — these columns do not exist.**
 
 ## targets ← User-defined CPB targets per state/segment
 One row per state+segment combination within a plan scope.
@@ -629,7 +638,9 @@ ORDER BY p.roe DESC
 **Note**: Join targets on \`state\`. Filter targets by \`activity_lead_type\` (combined value).
 If the user hasn't specified a plan_id, you can omit the plan_id filter or ask.
 
-## Pattern 5 — Price Exploration by State
+## Pattern 5 — Price Exploration by State + Channel
+**IMPORTANT**: \`channel_group_name\` in PE often includes the segment (e.g., "Group 100 MCH"). Use ILIKE for matching.
+**DO NOT** use activity_type, lead_type, or segment filters on this table — those columns do not exist.
 \`\`\`sql
 SELECT
   state,
@@ -639,18 +650,26 @@ SELECT
   SUM(sold) AS sold,
   CASE WHEN SUM(bids) = 0 THEN NULL ELSE SUM(sold) / SUM(bids) END AS win_rate,
   CASE WHEN SUM(sold) = 0 THEN NULL ELSE SUM(total_spend) / SUM(sold) END AS cpc,
-  SUM(additional_clicks) AS additional_clicks
+  SUM(additional_clicks) AS additional_clicks,
+  MAX(stat_sig) AS stat_sig,
+  MAX(win_rate_uplift) AS win_rate_uplift,
+  MAX(cpc_uplift) AS cpc_uplift
 FROM price_exploration_daily
 WHERE state = 'MA'
+  AND channel_group_name ILIKE '%Group 100%'   -- ← use ILIKE with % wildcards
+  AND channel_group_name ILIKE '%MCH%'          -- ← segment is part of the channel name
 GROUP BY state, channel_group_name, price_adjustment_percent
 ORDER BY channel_group_name, price_adjustment_percent
 \`\`\`
 
 ## Pattern 6 — Performance + PE Additional Binds (COMPLEX cross-table)
 To find states with additional binds from PE recommendations, combine:
-1. Performance data from \`state_segment_daily\` (for ROE, COR, current binds, quote_rate, q2b)
-2. PE data from \`price_exploration_daily\` (for additional_clicks at non-baseline testing points)
+1. Performance data from \`state_segment_daily\` (for ROE, COR, current binds, quote_rate, q2b) — filter by activity_type/lead_type
+2. PE data from \`price_exploration_daily\` (for additional_clicks at non-baseline testing points) — **NO activity/lead filters** (not available)
 3. additional_binds = additional_clicks × quote_rate × q2b
+
+**IMPORTANT**: When joining PE data with \`state_segment_daily\`, note that PE has no activity/lead type filtering.
+The join is on \`state\` only (PE has no segment column — segment is embedded in channel_group_name).
 
 \`\`\`sql
 WITH perf AS (
