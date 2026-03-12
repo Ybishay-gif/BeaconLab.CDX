@@ -14,16 +14,20 @@ function getGenAI() {
   return new GoogleGenerativeAI(key);
 }
 
-/** Retry helper for transient Gemini errors (503, 429 with retry hint) */
-async function withRetry<T>(fn: () => Promise<T>, retries = 2, delayMs = 2000): Promise<T> {
+/** Retry helper for transient Gemini errors (503, 429 rate limits) */
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 3000): Promise<T> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       return await fn();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      const isRetryable = msg.includes("503") || msg.includes("Service Unavailable") || msg.includes("overloaded");
+      const is503 = msg.includes("503") || msg.includes("Service Unavailable") || msg.includes("overloaded");
+      const is429 = msg.includes("429") || msg.includes("quota") || msg.includes("RESOURCE_EXHAUSTED");
+      const isRetryable = is503 || is429;
       if (isRetryable && attempt < retries) {
-        await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
+        // Longer delay for rate limits, shorter for 503
+        const wait = is429 ? delayMs * (attempt + 2) : delayMs * (attempt + 1);
+        await new Promise((r) => setTimeout(r, wait));
         continue;
       }
       throw err;
@@ -107,7 +111,9 @@ function validateSql(sql: string): boolean {
 
 function extractSqlBlock(text: string): string | null {
   const match = text.match(/```sql\s*\n([\s\S]*?)```/);
-  return match ? match[1].trim() : null;
+  if (!match) return null;
+  // Strip trailing semicolon — we append LIMIT ourselves
+  return match[1].trim().replace(/;\s*$/, "");
 }
 
 /** Qualify bare table names with dataset prefix when running against BQ */
@@ -147,14 +153,23 @@ export interface AiChatResponse {
   error?: string;
 }
 
+export interface PlanContext {
+  activityLeadType?: string;
+  perfStartDate?: string;
+  perfEndDate?: string;
+  qbcClicks?: number;
+  qbcLeadsCalls?: number;
+}
+
 export async function handleAiChat(
   message: string,
   sessionId: string,
   _userId: string,
+  planContext?: PlanContext,
 ): Promise<AiChatResponse> {
   const genAI = getGenAI();
   const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
-  const systemPrompt = buildSystemPrompt();
+  const systemPrompt = buildSystemPrompt(planContext);
   const session = getSession(sessionId);
 
   // --- Pass 1: Ask Gemini (may return SQL or a direct answer) ---

@@ -1,10 +1,19 @@
 import { Router } from "express";
 import { z } from "zod";
-import { handleAiChat, checkRateLimit } from "../../services/aiChatService.js";
+import { handleAiChat, checkRateLimit, type PlanContext } from "../../services/aiChatService.js";
+
+const planContextSchema = z.object({
+  activityLeadType: z.string().optional(),
+  perfStartDate: z.string().optional(),
+  perfEndDate: z.string().optional(),
+  qbcClicks: z.number().optional(),
+  qbcLeadsCalls: z.number().optional(),
+}).optional();
 
 const aiChatSchema = z.object({
   message: z.string().min(1).max(2000),
   sessionId: z.string().min(1).max(100),
+  planContext: planContextSchema,
 });
 
 export const aiChatRoutes = Router();
@@ -16,8 +25,8 @@ aiChatRoutes.post("/ai-chat", async (req, res, next) => {
       return;
     }
 
-    const { message, sessionId } = aiChatSchema.parse(req.body);
-    const result = await handleAiChat(message, sessionId, req.user!.userId);
+    const { message, sessionId, planContext } = aiChatSchema.parse(req.body);
+    const result = await handleAiChat(message, sessionId, req.user!.userId, planContext as PlanContext | undefined);
     res.json(result);
   } catch (error) {
     // Friendly error messages for common Gemini failures

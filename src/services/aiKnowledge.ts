@@ -12,14 +12,71 @@
 /*  SYSTEM PROMPT — assembled from sections below                     */
 /* ------------------------------------------------------------------ */
 
-export function buildSystemPrompt(): string {
-  return [
+interface PlanContextInput {
+  activityLeadType?: string;
+  perfStartDate?: string;
+  perfEndDate?: string;
+  qbcClicks?: number;
+  qbcLeadsCalls?: number;
+}
+
+export function buildSystemPrompt(planContext?: PlanContextInput): string {
+  const sections = [
     ROLE_INSTRUCTIONS,
     BUSINESS_GLOSSARY,
     TABLE_SCHEMAS,
     CALCULATION_LOGIC,
     QUERY_GUIDELINES,
-  ].join("\n\n");
+  ];
+
+  if (planContext) {
+    sections.push(buildPlanContextSection(planContext));
+  }
+
+  return sections.join("\n\n");
+}
+
+function buildPlanContextSection(ctx: PlanContextInput): string {
+  const lines: string[] = ["# Active Plan Context (current user session)"];
+  lines.push("Use these values to scope ALL data queries unless the user explicitly overrides them.\n");
+
+  // Activity & Lead Type
+  if (ctx.activityLeadType) {
+    const [activity, leadType] = ctx.activityLeadType.split("_");
+    const activityLabel = activity === "clicks" ? "Click" : activity === "leads" ? "Lead" : activity === "calls" ? "Call" : activity;
+    const leadLabel = leadType === "auto" ? "CAR_INSURANCE_LEAD" : leadType === "home" ? "HOME_INSURANCE_LEAD" : leadType;
+    lines.push(`**Activity Type**: ${activityLabel}`);
+    lines.push(`**Lead Type**: ${leadLabel}`);
+    lines.push(`→ When querying \`state_segment_daily\`, always include: \`WHERE activity_type = '${activityLabel}' AND lead_type = '${leadLabel}'\``);
+    lines.push("");
+  }
+
+  // Date ranges
+  if (ctx.perfStartDate && ctx.perfEndDate) {
+    lines.push(`**Performance Date Range**: ${ctx.perfStartDate} to ${ctx.perfEndDate}`);
+    lines.push(`→ When querying \`state_segment_daily\`, add: \`AND event_date BETWEEN '${ctx.perfStartDate}' AND '${ctx.perfEndDate}'\``);
+    lines.push("");
+  }
+
+  // QBC values
+  if (ctx.qbcClicks != null && ctx.qbcClicks > 0) {
+    lines.push(`**QBC (Quote/Bid Cost) for Clicks**: $${ctx.qbcClicks}`);
+  }
+  if (ctx.qbcLeadsCalls != null && ctx.qbcLeadsCalls > 0) {
+    lines.push(`**QBC for Leads/Calls**: $${ctx.qbcLeadsCalls}`);
+  }
+  if (ctx.activityLeadType) {
+    const activity = ctx.activityLeadType.split("_")[0];
+    const qbc = activity === "clicks" ? (ctx.qbcClicks ?? 0) : (ctx.qbcLeadsCalls ?? 0);
+    if (qbc > 0) {
+      lines.push(`→ For ROE and COR calculations, use QBC = ${qbc} (based on current activity type "${activity}")`);
+    }
+  }
+
+  lines.push("");
+  lines.push("**IMPORTANT**: Always apply the activity type, lead type, and date range filters above in your SQL queries. These reflect the user's current view settings.");
+
+  return lines.join("\n");
 }
 
 /* ------------------------------------------------------------------ */
