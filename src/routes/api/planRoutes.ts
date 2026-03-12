@@ -319,7 +319,7 @@ planRoutes.get("/plans/:planId/runs/:runId/results", async (req, res, next) => {
 planRoutes.post("/plans/:planId/outcome/generate", requireRole(["admin", "planner"]), async (req, res, next) => {
   try {
     const planId = req.params.planId;
-    const qbc = parseOptionalNumber(req.body.qbc);
+    const qbc = typeof req.body.qbc === "number" ? req.body.qbc : parseOptionalNumber(req.body.qbc);
     if (!Number.isFinite(qbc)) {
       res.status(400).json({ error: "qbc is required" });
       return;
