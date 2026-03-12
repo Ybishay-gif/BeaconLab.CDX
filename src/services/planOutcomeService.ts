@@ -153,6 +153,7 @@ export function buildPlanOutcome(
   for (const r of peRows) {
     if (
       r.recommended_testing_point != null &&
+      r.recommended_testing_point !== 0 &&
       r.testing_point === r.recommended_testing_point
     ) {
       recommended.push({
