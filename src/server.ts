@@ -179,6 +179,22 @@ async function runMigrations() {
     await pgExec("CREATE INDEX IF NOT EXISTS idx_tickets_type ON tickets (type)");
     await pgExec("CREATE INDEX IF NOT EXISTS idx_tickets_module ON tickets (module)");
 
+    // v2: Approval-based workflow statuses + test_results column
+    await pgExec(`
+      DO $$ BEGIN
+        ALTER TABLE tickets DROP CONSTRAINT IF EXISTS tickets_status_check;
+        ALTER TABLE tickets ADD CONSTRAINT tickets_status_check
+          CHECK (status IN ('todo','approved','coded','pending_review','deploy_approved','deployed'));
+        -- Migrate old statuses
+        UPDATE tickets SET status = 'deployed' WHERE status = 'done';
+        UPDATE tickets SET status = 'coded' WHERE status = 'in_progress';
+      EXCEPTION WHEN others THEN NULL;
+      END $$
+    `);
+    await pgExec(`
+      ALTER TABLE tickets ADD COLUMN IF NOT EXISTS test_results TEXT
+    `);
+
     console.log("Migrations OK");
   } catch (err) {
     console.warn("Migration warning (non-fatal):", err);

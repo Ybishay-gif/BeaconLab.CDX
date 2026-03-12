@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { query, table } from "../db/index.js";
 
+export type TicketStatus = "todo" | "approved" | "coded" | "pending_review" | "deploy_approved" | "deployed";
+
 export type TicketRow = {
   ticket_id: string;
   ticket_number: number;
   type: "bug" | "feature";
-  status: "todo" | "in_progress" | "done";
+  status: TicketStatus;
   title: string;
   description: string;
   module: string;
@@ -16,6 +18,7 @@ export type TicketRow = {
   assigned_to: string | null;
   resolved_at: string | null;
   resolution_notes: string | null;
+  test_results: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -37,8 +40,9 @@ export type CreateTicketInput = {
 };
 
 export type UpdateTicketInput = {
-  status?: "todo" | "in_progress" | "done";
+  status?: TicketStatus;
   resolution_notes?: string;
+  test_results?: string;
   assigned_to?: string | null;
 };
 
@@ -122,7 +126,7 @@ export async function listTickets(filters: TicketFilters = {}): Promise<TicketRo
         ) AS attachments,
         created_by, created_by_email, assigned_to,
         resolved_at::text AS resolved_at,
-        resolution_notes,
+        resolution_notes, test_results,
         created_at::text AS created_at,
         updated_at::text AS updated_at
       FROM ${table("tickets")}
@@ -142,7 +146,7 @@ export async function getTicket(ticketId: string): Promise<TicketRow | null> {
         module, page, attachments,
         created_by, created_by_email, assigned_to,
         resolved_at::text AS resolved_at,
-        resolution_notes,
+        resolution_notes, test_results,
         created_at::text AS created_at,
         updated_at::text AS updated_at
       FROM ${table("tickets")}
@@ -160,13 +164,17 @@ export async function updateTicket(ticketId: string, input: UpdateTicketInput): 
   if (input.status !== undefined) {
     sets.push("status = @status");
     params.status = input.status;
-    if (input.status === "done") {
+    if (input.status === "deployed") {
       sets.push("resolved_at = CURRENT_TIMESTAMP()");
     }
   }
   if (input.resolution_notes !== undefined) {
     sets.push("resolution_notes = @resolutionNotes");
     params.resolutionNotes = input.resolution_notes;
+  }
+  if (input.test_results !== undefined) {
+    sets.push("test_results = @testResults");
+    params.testResults = input.test_results;
   }
   if (input.assigned_to !== undefined) {
     sets.push("assigned_to = @assignedTo");
