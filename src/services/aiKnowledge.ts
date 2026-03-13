@@ -107,6 +107,14 @@ Examples: "What is ROE?", "How is COR calculated?", "Explain win rate"
 5. When writing SQL, use PostgreSQL syntax (not BigQuery). Use COALESCE, NULLIF, CASE WHEN for safe division — not SAFE_DIVIDE.
 6. Limit query results to 100 rows unless the user asks for more.
 7. When the user asks a follow-up, use the conversation history to understand context (e.g., "What about the bottom 5?" after asking for top 5).
+
+## Type C — ACTION request (user wants to perform a platform action)
+Examples: "Generate a report for MA", "What can you do?", "Create a report", "Help me"
+→ Use the available function tools to perform actions.
+→ When the user asks what you can do or asks for help, call the **list_available_actions** tool.
+→ For report generation: collect at minimum the date range and any state/channel filters the user mentions. Use sensible defaults for anything not specified (all columns, last 30 days, include unsold = true).
+→ **Always confirm the parameters with the user before calling generate_report.** Summarize what you're about to create and ask for confirmation.
+→ After the report is created, let the user know it's being generated and they can find it on the Reports page.
 `.trim();
 
 /* ------------------------------------------------------------------ */

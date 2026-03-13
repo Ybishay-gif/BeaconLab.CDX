@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI, type Content } from "@google/generative-ai";
 import { query, table } from "../db/index.js";
 import { buildSystemPrompt } from "./aiKnowledge.js";
+import { ACTION_TOOLS, executeAction, type ActionResult } from "./aiActions.js";
 
 /* ------------------------------------------------------------------ */
 /*  Gemini client                                                     */
@@ -150,6 +151,10 @@ function qualifyTableNames(sql: string): string {
 export interface AiChatResponse {
   answer: string;
   sql?: string;
+  action?: {
+    type: string;
+    payload: unknown;
+  };
   error?: string;
 }
 
@@ -164,7 +169,7 @@ export interface PlanContext {
 export async function handleAiChat(
   message: string,
   sessionId: string,
-  _userId: string,
+  userId: string,
   planContext?: PlanContext,
 ): Promise<AiChatResponse> {
   const genAI = getGenAI();
@@ -172,19 +177,37 @@ export async function handleAiChat(
   const systemPrompt = buildSystemPrompt(planContext);
   const session = getSession(sessionId);
 
-  // --- Pass 1: Ask Gemini (may return SQL or a direct answer) ---
+  // --- Pass 1: Ask Gemini (may return SQL, a function call, or a direct answer) ---
   session.history.push({ role: "user", parts: [{ text: message }] });
   trimHistory(session);
 
   const chat = model.startChat({
     history: session.history.slice(0, -1), // all except the latest user msg
     systemInstruction: { role: "user", parts: [{ text: systemPrompt }] },
+    tools: [ACTION_TOOLS],
   });
 
   const pass1 = await withRetry(() => chat.sendMessage(message));
-  const pass1Text = pass1.response.text();
+  const pass1Response = pass1.response;
 
-  // --- Check if Gemini returned SQL ---
+  // --- Check for function calls (actions) ---
+  const functionCallPart = pass1Response.candidates?.[0]?.content?.parts?.find(
+    (p) => p.functionCall,
+  );
+
+  if (functionCallPart?.functionCall) {
+    return await handleFunctionCall(
+      chat,
+      session,
+      functionCallPart.functionCall.name,
+      (functionCallPart.functionCall.args as Record<string, unknown>) || {},
+      userId,
+    );
+  }
+
+  // --- No function call — check for SQL or direct answer ---
+  const pass1Text = pass1Response.text();
+
   const sql = extractSqlBlock(pass1Text);
 
   if (!sql) {
@@ -239,6 +262,54 @@ export async function handleAiChat(
   // --- Pass 2: Summarize results ---
   return await summarizeResults(chat, session, queryResults, sql);
 }
+
+/* ------------------------------------------------------------------ */
+/*  Function call handler                                              */
+/* ------------------------------------------------------------------ */
+
+async function handleFunctionCall(
+  chat: ReturnType<ReturnType<GoogleGenerativeAI["getGenerativeModel"]>["startChat"]>,
+  session: Session,
+  functionName: string,
+  args: Record<string, unknown>,
+  userId: string,
+): Promise<AiChatResponse> {
+  // Execute the action
+  let actionResult: ActionResult;
+  try {
+    actionResult = await executeAction(functionName, args, userId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    actionResult = { response: { error: `Action failed: ${msg}` } };
+  }
+
+  // Send function result back to Gemini for a human-friendly summary
+  const functionResponse = await withRetry(() =>
+    chat.sendMessage([
+      {
+        functionResponse: {
+          name: functionName,
+          response: actionResult.response,
+        },
+      },
+    ]),
+  );
+
+  const answer = functionResponse.response.text();
+
+  // Store the full exchange in history (model's function call + function response + model summary)
+  session.history.push({ role: "model", parts: [{ text: answer }] });
+  trimHistory(session);
+
+  return {
+    answer,
+    action: actionResult.action,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  SQL result summarizer                                              */
+/* ------------------------------------------------------------------ */
 
 async function summarizeResults(
   chat: ReturnType<ReturnType<GoogleGenerativeAI["getGenerativeModel"]>["startChat"]>,
