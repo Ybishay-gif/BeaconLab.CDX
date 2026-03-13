@@ -23,8 +23,6 @@ import { buildPlanOutcome } from "../../services/planOutcomeService.js";
 import { parseOptionalNumber, parseQueryArray } from "./queryParsers.js";
 
 const planContextSchema = z.object({
-  activity: z.string().optional(),
-  lead_type: z.string().optional(),
   perf_start_date: z.string().optional(),
   perf_end_date: z.string().optional(),
   price_start_date: z.string().optional(),
@@ -93,8 +91,6 @@ planRoutes.get("/plans", async (_req, res, next) => {
       }
       return {
         ...p,
-        activity: ctx.activity ?? "",
-        lead_type: ctx.leadType ?? "",
         // Support both new (perfStartDate) and legacy (performanceStartDate) field names
         perf_start_date: ctx.perfStartDate ?? ctx.performanceStartDate ?? "",
         perf_end_date: ctx.perfEndDate ?? ctx.performanceEndDate ?? "",
@@ -129,8 +125,6 @@ planRoutes.post("/plans", requirePermission("plan_builder:edit"), async (req, re
         priceEndDate: parsed.price_end_date ?? "",
         qbcClicks: parsed.qbc_clicks ?? 0,
         qbcLeadsCalls: parsed.qbc_leads_calls ?? 0,
-        activity: parsed.activity ?? "",
-        leadType: parsed.lead_type ?? ""
       });
     }
 
@@ -193,9 +187,7 @@ planRoutes.put("/plans/:planId", requirePermission("plan_builder:edit"), async (
     if (
       parsed.perf_start_date !== undefined ||
       parsed.perf_end_date !== undefined ||
-      parsed.qbc_clicks !== undefined ||
-      parsed.activity !== undefined ||
-      parsed.lead_type !== undefined
+      parsed.qbc_clicks !== undefined
     ) {
       await upsertPlanContext(req.params.planId, req.user!.userId, {
         perfStartDate: parsed.perf_start_date ?? "",
@@ -204,8 +196,6 @@ planRoutes.put("/plans/:planId", requirePermission("plan_builder:edit"), async (
         priceEndDate: parsed.price_end_date ?? "",
         qbcClicks: parsed.qbc_clicks ?? 0,
         qbcLeadsCalls: parsed.qbc_leads_calls ?? 0,
-        activity: parsed.activity ?? "",
-        leadType: parsed.lead_type ?? ""
       });
     }
 

@@ -315,8 +315,8 @@ export async function upsertPlanContext(
     priceEndDate: string;
     qbcClicks: number;
     qbcLeadsCalls: number;
-    activity: string;
-    leadType: string;
+    activity?: string;
+    leadType?: string;
   }
 ): Promise<void> {
   const contextJson = JSON.stringify(context);
