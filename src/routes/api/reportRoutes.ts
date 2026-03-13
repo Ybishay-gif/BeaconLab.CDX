@@ -8,6 +8,7 @@ import {
   deleteReport,
   getTableSchema,
   getFilterValues,
+  checkRowCount,
 } from "../../services/reportService.js";
 
 const createReportSchema = z.object({
@@ -52,6 +53,40 @@ reportRoutes.get("/reports/filter-values/:column", async (req, res, next) => {
   try {
     const values = await getFilterValues(req.params.column);
     res.json({ values });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Check row count (preview)
+const checkReportSchema = z.object({
+  dateStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  dateEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  fixedFilters: z
+    .object({
+      account_name: z.array(z.string()).optional(),
+      campaign_name: z.array(z.string()).optional(),
+      attribution_channel: z.array(z.string()).optional(),
+      data_state: z.array(z.string()).optional(),
+      transaction_sold: z.enum(["0", "1", "all"]).optional(),
+    })
+    .default({}),
+  dynamicFilters: z
+    .array(
+      z.object({
+        column: z.string(),
+        operator: z.enum(["=", "!=", ">", "<", ">=", "<=", "BETWEEN", "LIKE", "IN"]),
+        value: z.union([z.string(), z.number(), z.array(z.union([z.string(), z.number()]))]),
+      })
+    )
+    .default([]),
+});
+
+reportRoutes.post("/reports/check", async (req, res, next) => {
+  try {
+    const parsed = checkReportSchema.parse(req.body);
+    const result = await checkRowCount(parsed);
+    res.json(result);
   } catch (error) {
     next(error);
   }

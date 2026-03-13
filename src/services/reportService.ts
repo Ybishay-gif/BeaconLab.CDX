@@ -227,6 +227,35 @@ export async function getDownloadUrl(reportId: string): Promise<string | null> {
   return url;
 }
 
+// ── Check Row Count (preview) ──────────────────────────────────────
+
+export async function checkRowCount(input: {
+  dateStart: string;
+  dateEnd: string;
+  fixedFilters: FixedFilters;
+  dynamicFilters: DynamicFilter[];
+}): Promise<{ count: number }> {
+  // Validate dynamic filter columns
+  for (const f of input.dynamicFilters) {
+    await validateColumns([f.column]);
+  }
+
+  // Reuse buildSelectSql with a dummy column — we only need the WHERE clause
+  const { sql: fullSql, params } = buildSelectSql(
+    ["Data_DateCreated"], // dummy column, will be replaced
+    input.fixedFilters,
+    input.dynamicFilters,
+    input.dateStart,
+    input.dateEnd
+  );
+
+  // Replace SELECT ... FROM with SELECT COUNT(*) as cnt FROM
+  const countSql = fullSql.replace(/^SELECT .+ FROM/, "SELECT COUNT(*) as cnt FROM");
+
+  const rows = await bqQuery<{ cnt: number }>(countSql, params);
+  return { count: Number(rows[0]?.cnt ?? 0) };
+}
+
 // ── Async Report Generation ────────────────────────────────────────
 
 const ALLOWED_OPERATORS = new Set(["=", "!=", ">", "<", ">=", "<=", "BETWEEN", "LIKE", "IN"]);
