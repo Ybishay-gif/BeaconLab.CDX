@@ -14,7 +14,7 @@
  */
 
 import { bigquery, table as bqTable, analyticsTable as bqAnalyticsTable, analyticsRoutine as bqAnalyticsRoutine } from "../db/bigquery.js";
-import { pgExec } from "../db/postgres.js";
+import { pgTransaction } from "../db/postgres.js";
 import { config } from "../config.js";
 import { buildRoeSql, buildCombinedRatioSql } from "../services/shared/kpiSql.js";
 import { splitCombinedFilter } from "../services/shared/activityScope.js";
@@ -123,10 +123,9 @@ function buildInsertBatch(tableName: string, cols: readonly string[], rows: Reco
 // ── Per-table sync (streaming) ────────────────────────────────────────
 
 /**
- * Streams rows from BQ and inserts into PG in small batches.
- * Never holds more than BATCH_SIZE rows in memory at once.
- * Truncates first, then streams inserts — no wrapping transaction needed
- * because each batch is independent and the data is refreshed daily.
+ * Streams rows from BQ and inserts into PG in batches.
+ * Uses createQueryStream() to avoid loading all rows into memory.
+ * Wrapped in a transaction so readers never see a truncated/partial table.
  */
 async function syncTable(
   tableName: string,
@@ -140,27 +139,24 @@ async function syncTable(
         : tableName === "price_exploration_daily" ? PRICE_EXPLORATION_DAILY_COLS
         : STATE_SEGMENT_DAILY_COLS);
 
-    await pgExec(`TRUNCATE ${tableName}`);
-
+    // Stream all rows from BQ first
     const stream = bigquery.createQueryStream({ query: bqSql, useLegacySql: false });
-    let batch: Record<string, unknown>[] = [];
-    let totalRows = 0;
-
+    const allRows: Record<string, unknown>[] = [];
     for await (const row of stream) {
-      batch.push(row as Record<string, unknown>);
-      if (batch.length >= BATCH_SIZE) {
-        await pgExec(buildInsertBatch(tableName, colDefs, batch));
-        totalRows += batch.length;
-        batch = [];
-      }
-    }
-    // Flush remaining rows
-    if (batch.length > 0) {
-      await pgExec(buildInsertBatch(tableName, colDefs, batch));
-      totalRows += batch.length;
+      allRows.push(row as Record<string, unknown>);
     }
 
-    return { table: tableName, rows: totalRows, ms: Date.now() - t0 };
+    // TRUNCATE + INSERT inside a single transaction so readers
+    // always see either the old complete data or the new complete data.
+    await pgTransaction(async (exec) => {
+      await exec(`TRUNCATE ${tableName}`);
+      for (let i = 0; i < allRows.length; i += BATCH_SIZE) {
+        const batch = allRows.slice(i, i + BATCH_SIZE);
+        await exec(buildInsertBatch(tableName, colDefs, batch));
+      }
+    });
+
+    return { table: tableName, rows: allRows.length, ms: Date.now() - t0 };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { table: tableName, rows: 0, ms: Date.now() - t0, error: message };
@@ -966,26 +962,27 @@ async function syncPeComputedForScope(
   const t0 = Date.now();
   try {
     const sql = buildPeSyncSql(activityType, leadType);
+    // Stream rows from BQ to avoid loading entire result set at once
     const stream = bigquery.createQueryStream({ query: sql, useLegacySql: false });
-    let batch: Record<string, unknown>[] = [];
-    let totalRows = 0;
-
+    const allRows: Record<string, unknown>[] = [];
     for await (const row of stream) {
       const r = row as Record<string, unknown>;
       r.activity_lead_type = scope;
-      batch.push(r);
-      if (batch.length >= BATCH_SIZE) {
-        await pgExec(buildInsertBatch("pe_computed_daily", PE_COMPUTED_DAILY_COLS, batch));
-        totalRows += batch.length;
-        batch = [];
-      }
-    }
-    if (batch.length > 0) {
-      await pgExec(buildInsertBatch("pe_computed_daily", PE_COMPUTED_DAILY_COLS, batch));
-      totalRows += batch.length;
+      allRows.push(r);
     }
 
-    return { table: `pe_computed_daily[${scope}]`, rows: totalRows, ms: Date.now() - t0 };
+    if (!allRows.length) {
+      return { table: `pe_computed_daily[${scope}]`, rows: 0, ms: Date.now() - t0 };
+    }
+
+    await pgTransaction(async (exec) => {
+      for (let i = 0; i < allRows.length; i += BATCH_SIZE) {
+        const batch = allRows.slice(i, i + BATCH_SIZE);
+        await exec(buildInsertBatch("pe_computed_daily", PE_COMPUTED_DAILY_COLS, batch));
+      }
+    });
+
+    return { table: `pe_computed_daily[${scope}]`, rows: allRows.length, ms: Date.now() - t0 };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`PE sync error for scope ${scope}:`, message);
@@ -1026,7 +1023,9 @@ async function syncPeComputed(): Promise<SyncTableResult[]> {
     if (scopes.size === 0) scopes.add("clicks_auto");
 
     // Truncate once before syncing all scopes
-    await pgExec("TRUNCATE pe_computed_daily");
+    await pgTransaction(async (exec) => {
+      await exec("TRUNCATE pe_computed_daily");
+    });
 
     // Sync each scope sequentially
     for (const scope of scopes) {
@@ -1077,26 +1076,21 @@ async function syncPlanMerged(): Promise<SyncTableResult> {
       )
     `;
 
-    await pgExec("TRUNCATE plan_merged_daily");
-
     const stream = bigquery.createQueryStream({ query: sql, useLegacySql: false });
-    let batch: Record<string, unknown>[] = [];
-    let totalRows = 0;
-
+    const allRows: Record<string, unknown>[] = [];
     for await (const row of stream) {
-      batch.push(row as Record<string, unknown>);
-      if (batch.length >= BATCH_SIZE) {
-        await pgExec(buildInsertBatch("plan_merged_daily", PLAN_MERGED_DAILY_COLS, batch));
-        totalRows += batch.length;
-        batch = [];
-      }
-    }
-    if (batch.length > 0) {
-      await pgExec(buildInsertBatch("plan_merged_daily", PLAN_MERGED_DAILY_COLS, batch));
-      totalRows += batch.length;
+      allRows.push(row as Record<string, unknown>);
     }
 
-    return { table: "plan_merged_daily", rows: totalRows, ms: Date.now() - t0 };
+    await pgTransaction(async (exec) => {
+      await exec("TRUNCATE plan_merged_daily");
+      for (let i = 0; i < allRows.length; i += BATCH_SIZE) {
+        const batch = allRows.slice(i, i + BATCH_SIZE);
+        await exec(buildInsertBatch("plan_merged_daily", PLAN_MERGED_DAILY_COLS, batch));
+      }
+    });
+
+    return { table: "plan_merged_daily", rows: allRows.length, ms: Date.now() - t0 };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("Plan-merged sync error:", message);
