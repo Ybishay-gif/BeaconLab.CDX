@@ -105,7 +105,7 @@ export async function getFilterValues(columnName: string): Promise<string[]> {
      FROM ${config.rawCrossTacticTable}
      WHERE \`${columnName}\` IS NOT NULL
      ORDER BY val
-     LIMIT 1000`
+     LIMIT 10000`
   );
 
   const values = rows.map((r) => String(r.val));
