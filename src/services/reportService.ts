@@ -382,11 +382,80 @@ export async function generateReport(reportId: string): Promise<void> {
     const [metadata] = await destRef.getMetadata();
     const rowCount = Number(metadata.numRows ?? rows.length ?? 0);
 
-    // Export to GCS as CSV
-    const gcsPath = `reports/${reportId}.csv`;
-    const gcsFile = storage.bucket(config.reportsBucket).file(gcsPath);
+    // Export to GCS as CSV — use wildcard for large tables
+    const bucket = storage.bucket(config.reportsBucket);
+    const shardPrefix = `reports/${reportId}/shard_`;
+    const shardUri = `gs://${config.reportsBucket}/${shardPrefix}*.csv`;
+    const finalPath = `reports/${reportId}.csv`;
 
-    await destRef.extract(gcsFile, { format: "CSV" });
+    // Sharded export via BQ extract job with wildcard URI
+    const [extractJob] = await bigquery.createJob({
+      configuration: {
+        extract: {
+          sourceTable: {
+            projectId: config.projectId,
+            datasetId: config.dataset,
+            tableId: destTableId,
+          },
+          destinationUris: [shardUri],
+          destinationFormat: "CSV",
+          printHeader: true,
+        },
+      },
+    });
+    // Poll until done
+    let extractMeta = (await extractJob.getMetadata())[0];
+    while (extractMeta.status?.state !== "DONE") {
+      await new Promise((r) => setTimeout(r, 2000));
+      extractMeta = (await extractJob.getMetadata())[0];
+    }
+    if (extractMeta.status?.errorResult) {
+      throw new Error(`Extract failed: ${JSON.stringify(extractMeta.status.errorResult)}`);
+    }
+
+    // List shard files and compose into a single CSV
+    const [shardFiles] = await bucket.getFiles({ prefix: `reports/${reportId}/shard_` });
+
+    if (shardFiles.length === 1) {
+      // Single shard — just move/copy it
+      await shardFiles[0].copy(bucket.file(finalPath));
+      await shardFiles[0].delete();
+    } else if (shardFiles.length > 1) {
+      // Multiple shards — compose into one file (max 32 sources per compose)
+      // GCS compose limit is 32 sources, chain if needed
+      let sources = shardFiles;
+      let tempIdx = 0;
+      while (sources.length > 1) {
+        const batches = [];
+        for (let i = 0; i < sources.length; i += 32) {
+          batches.push(sources.slice(i, i + 32));
+        }
+        const nextSources = [];
+        for (const batch of batches) {
+          if (batch.length === 1) {
+            nextSources.push(batch[0]);
+            continue;
+          }
+          const target = bucket.file(`reports/${reportId}/_tmp_${tempIdx++}.csv`);
+          await bucket.combine(batch, target);
+          // Delete batch sources
+          for (const f of batch) {
+            try { await f.delete(); } catch { /* ignore */ }
+          }
+          nextSources.push(target);
+        }
+        sources = nextSources;
+      }
+      // Rename final temp to final path
+      await sources[0].copy(bucket.file(finalPath));
+      try { await sources[0].delete(); } catch { /* ignore */ }
+    }
+
+    // Clean up shard directory (any remaining files)
+    const [remaining] = await bucket.getFiles({ prefix: `reports/${reportId}/` });
+    for (const f of remaining) {
+      try { await f.delete(); } catch { /* ignore */ }
+    }
 
     // Clean up temp BQ table
     try {
@@ -395,7 +464,7 @@ export async function generateReport(reportId: string): Promise<void> {
       // Non-critical — table will expire anyway
     }
 
-    await updateStatus(reportId, "done", { fileUrl: gcsPath, rowCount });
+    await updateStatus(reportId, "done", { fileUrl: finalPath, rowCount });
     console.log(`Report ${reportId} generated: ${rowCount} rows`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
