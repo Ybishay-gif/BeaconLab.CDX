@@ -15,7 +15,6 @@ import { syncAllFromBQ } from "../../jobs/syncFromBQ.js";
 import { snapshotSuggestedCpb } from "../../jobs/snapshotSuggestedCpb.js";
 import { parseOptionalNumber, parseQueryArray } from "./queryParsers.js";
 import { cacheClear, cacheStats } from "../../cache.js";
-import { compareAll } from "../../services/compareService.js";
 
 export const analyticsRoutes = Router();
 
@@ -115,23 +114,6 @@ adminRoutes.post("/admin/snapshot-suggested-cpb", async (_req, res) => {
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: "Snapshot failed", detail: String(error) });
-  }
-});
-
-// Shadow-mode comparison — runs both BQ and PG paths, compares results.
-adminRoutes.post("/admin/compare", async (req, res) => {
-  try {
-    const body = req.body as Record<string, unknown> || {};
-    const report = await compareAll({
-      startDate: typeof body.startDate === "string" ? body.startDate : undefined,
-      endDate: typeof body.endDate === "string" ? body.endDate : undefined,
-      activityLeadType: typeof body.activityLeadType === "string" ? body.activityLeadType : undefined,
-      qbc: typeof body.qbc === "number" ? body.qbc : undefined,
-      functions: Array.isArray(body.functions) ? body.functions as string[] : undefined,
-    });
-    res.json(report);
-  } catch (error) {
-    res.status(500).json({ error: "Compare failed", detail: String(error) });
   }
 });
 
