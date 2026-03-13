@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { query, table } from "../db/bigquery.js";
+import { config } from "../config.js";
+import { query, table } from "../db/index.js";
 let changeLogTableReady = null;
 function ensureChangeLogTableExists() {
+    if (config.usePg)
+        return Promise.resolve();
     if (!changeLogTableReady) {
         changeLogTableReady = query(`
         CREATE TABLE IF NOT EXISTS ${table("change_log")} (
@@ -14,7 +17,8 @@ function ensureChangeLogTableExists() {
           action STRING NOT NULL,
           before_json STRING,
           after_json STRING,
-          metadata_json STRING
+          metadata_json STRING,
+          module STRING
         )
       `).then(() => undefined);
     }
@@ -34,7 +38,8 @@ export async function appendChangeLog(user, entry) {
         action,
         before_json,
         after_json,
-        metadata_json
+        metadata_json,
+        module
       )
       VALUES (
         @changeId,
@@ -46,7 +51,8 @@ export async function appendChangeLog(user, entry) {
         @action,
         @beforeJson,
         @afterJson,
-        @metadataJson
+        @metadataJson,
+        @module
       )
     `, {
         changeId,
@@ -57,17 +63,38 @@ export async function appendChangeLog(user, entry) {
         action: String(entry.action || "").trim(),
         beforeJson: entry.before === undefined ? null : JSON.stringify(entry.before),
         afterJson: entry.after === undefined ? null : JSON.stringify(entry.after),
-        metadataJson: entry.metadata === undefined ? null : JSON.stringify(entry.metadata)
+        metadataJson: entry.metadata === undefined ? null : JSON.stringify(entry.metadata),
+        module: entry.module || "planning"
     });
     return { changeId };
 }
-export async function listChangeLogs(limit = 200) {
+export async function listChangeLogs(filters = {}) {
     await ensureChangeLogTableExists();
-    const normalizedLimit = Math.max(1, Math.min(1000, Math.floor(Number(limit) || 200)));
+    const normalizedLimit = Math.max(1, Math.min(1000, Math.floor(Number(filters.limit) || 200)));
+    const castAt = config.usePg ? "changed_at::text" : "CAST(changed_at AS STRING)";
+    const conditions = [];
+    const params = { limit: normalizedLimit };
+    if (filters.objectType) {
+        conditions.push("object_type = @objectType");
+        params.objectType = filters.objectType;
+    }
+    if (filters.objectId) {
+        conditions.push("object_id = @objectId");
+        params.objectId = filters.objectId;
+    }
+    if (filters.userId) {
+        conditions.push("changed_by_user_id = @userId");
+        params.userId = filters.userId;
+    }
+    if (filters.module) {
+        conditions.push("module = @module");
+        params.module = filters.module;
+    }
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     return query(`
       SELECT
         change_id,
-        CAST(changed_at AS STRING) AS changed_at,
+        ${castAt} AS changed_at,
         changed_by_user_id,
         changed_by_email,
         object_type,
@@ -75,9 +102,11 @@ export async function listChangeLogs(limit = 200) {
         action,
         before_json,
         after_json,
-        metadata_json
+        metadata_json,
+        module
       FROM ${table("change_log")}
+      ${whereClause}
       ORDER BY changed_at DESC
       LIMIT @limit
-    `, { limit: normalizedLimit });
+    `, params);
 }

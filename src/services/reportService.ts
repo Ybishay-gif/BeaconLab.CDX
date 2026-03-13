@@ -71,7 +71,7 @@ export async function getTableSchema(): Promise<ColumnSchema[]> {
   const rows = await bqQuery<ColumnSchema>(
     `SELECT column_name, data_type
      FROM \`crblx-beacon-prod.Custom_Reports.INFORMATION_SCHEMA.COLUMNS\`
-     WHERE table_name = 'Cross Tactic Analysis Full Data'
+     WHERE table_name = 'Cross Tactic Analysis Full Data '
      ORDER BY ordinal_position`
   );
 

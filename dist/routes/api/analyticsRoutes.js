@@ -1,7 +1,103 @@
 import { Router } from "express";
-import { getPlanMergedAnalytics, getPriceExploration, getStateAnalysis, getStateSegmentPerformance, getStrategyAnalysis, listPlanMergedFilters, listPriceExplorationFilters, listStateSegmentFilters } from "../../services/analyticsService.js";
+import { getPlanMergedAnalytics, getPlansComparison, getPriceExploration, getStateAnalysis, getStateSegmentPerformance, getStrategyAnalysis, listPlanMergedFilters, listPriceExplorationFilters, listStateSegmentFilters } from "../../services/analyticsService.js";
+import { listPlans } from "../../services/plansService.js";
+import { syncAllFromBQ } from "../../jobs/syncFromBQ.js";
+import { snapshotSuggestedCpb } from "../../jobs/snapshotSuggestedCpb.js";
 import { parseOptionalNumber, parseQueryArray } from "./queryParsers.js";
+import { cacheClear, cacheStats } from "../../cache.js";
 export const analyticsRoutes = Router();
+// ── Admin endpoints (no auth required — called by Cloud Scheduler) ──────────
+export const adminRoutes = Router();
+// Cache warming — called by Cloud Scheduler daily to pre-warm the analytics cache.
+// Also callable manually by admins.
+adminRoutes.post("/admin/warm-cache", async (_req, res) => {
+    const start = Date.now();
+    try {
+        const plans = await listPlans();
+        const activePlans = plans.filter((p) => p.status !== "archived");
+        const results = [];
+        for (const plan of activePlans) {
+            const planStart = Date.now();
+            try {
+                // Parse plan_context_config to get dates and qbc
+                let ctx = {};
+                try {
+                    ctx = plan.plan_context_json ? JSON.parse(plan.plan_context_json) : {};
+                }
+                catch { /* ignore */ }
+                // Support both new and legacy field names
+                const perfStartDate = String(ctx.perfStartDate || ctx.performanceStartDate || "");
+                const perfEndDate = String(ctx.perfEndDate || ctx.performanceEndDate || "");
+                const qbc = Number(ctx.qbcClicks) || 0;
+                // Derive activityLeadType from stored activity + leadType, or use direct value if present
+                const activity = String(ctx.activity || "clicks");
+                const leadType = String(ctx.leadType || "auto");
+                const activityLeadType = ctx.activityLeadType
+                    ? String(ctx.activityLeadType)
+                    : `${activity}_${leadType}`;
+                if (!perfStartDate || !perfEndDate || !qbc) {
+                    results.push({ planId: plan.plan_id, planName: plan.plan_name, ok: false, ms: 0 });
+                    continue;
+                }
+                // Pre-warm the heaviest queries in parallel
+                await Promise.all([
+                    getStateAnalysis({ planId: plan.plan_id, startDate: perfStartDate, endDate: perfEndDate, activityLeadType, qbc }).catch(() => null),
+                    getStrategyAnalysis({ planId: plan.plan_id, startDate: perfStartDate, endDate: perfEndDate, activityLeadType, qbc }).catch(() => null),
+                    getStateSegmentPerformance({ startDate: perfStartDate, endDate: perfEndDate, activityLeadType, qbc }).catch(() => null),
+                    listStateSegmentFilters({ startDate: perfStartDate, endDate: perfEndDate, activityLeadType }).catch(() => null),
+                    listPriceExplorationFilters({ startDate: perfStartDate, endDate: perfEndDate, activityLeadType }).catch(() => null),
+                    listPlanMergedFilters({ startDate: perfStartDate, endDate: perfEndDate, activityLeadType }).catch(() => null),
+                ]);
+                results.push({ planId: plan.plan_id, planName: plan.plan_name, ok: true, ms: Date.now() - planStart });
+            }
+            catch {
+                results.push({ planId: plan.plan_id, planName: plan.plan_name, ok: false, ms: Date.now() - planStart });
+            }
+        }
+        res.json({
+            totalMs: Date.now() - start,
+            plans: results
+        });
+    }
+    catch (error) {
+        res.status(500).json({ error: "Cache warming failed", detail: String(error) });
+    }
+});
+// BQ → PG sync — called by Cloud Scheduler daily (or manually by admins).
+// Also triggers the suggested-CPB snapshot after sync completes.
+// Clears the analytics BQ cache so next request gets fresh data.
+adminRoutes.post("/admin/sync-from-bq", async (_req, res) => {
+    try {
+        const syncResult = await syncAllFromBQ();
+        // Chain: snapshot suggested CPB into BQ after fresh perf data is available
+        const snapshotResult = await snapshotSuggestedCpb();
+        // Clear analytics BQ cache — fresh data now available
+        cacheClear();
+        res.json({ ...syncResult, suggestedCpbSnapshot: snapshotResult, cacheCleared: true });
+    }
+    catch (error) {
+        res.status(500).json({ error: "Sync failed", detail: String(error) });
+    }
+});
+// Cache diagnostics
+adminRoutes.get("/admin/cache-stats", (_req, res) => {
+    res.json(cacheStats());
+});
+// Manual cache clear
+adminRoutes.post("/admin/clear-cache", (_req, res) => {
+    cacheClear();
+    res.json({ ok: true, message: "Analytics BQ cache cleared" });
+});
+// Standalone snapshot of suggested Target CPB → BQ (manual trigger).
+adminRoutes.post("/admin/snapshot-suggested-cpb", async (_req, res) => {
+    try {
+        const result = await snapshotSuggestedCpb();
+        res.json(result);
+    }
+    catch (error) {
+        res.status(500).json({ error: "Snapshot failed", detail: String(error) });
+    }
+});
 analyticsRoutes.get("/analytics/state-segment-performance/filters", async (req, res, next) => {
     try {
         const filters = await listStateSegmentFilters({
@@ -29,6 +125,7 @@ analyticsRoutes.get("/analytics/state-segment-performance", async (req, res, nex
             segments: parseQueryArray(req.query.segments),
             channelGroups: parseQueryArray(req.query.channelGroups),
             activityLeadType: typeof req.query.activityLeadType === "string" ? req.query.activityLeadType : undefined,
+            groupBy: typeof req.query.groupBy === "string" ? req.query.groupBy : undefined,
             qbc
         });
         res.json({ rows });
@@ -58,6 +155,7 @@ analyticsRoutes.get("/analytics/price-exploration", async (req, res, next) => {
             return;
         }
         const limit = parseOptionalNumber(req.query.limit);
+        const topPairs = parseOptionalNumber(req.query.topPairs);
         const rows = await getPriceExploration({
             planId: typeof req.query.planId === "string" ? req.query.planId : undefined,
             startDate: typeof req.query.startDate === "string" ? req.query.startDate : undefined,
@@ -68,7 +166,8 @@ analyticsRoutes.get("/analytics/price-exploration", async (req, res, next) => {
             channelGroups: parseQueryArray(req.query.channelGroups),
             activityLeadType: typeof req.query.activityLeadType === "string" ? req.query.activityLeadType : undefined,
             qbc,
-            limit
+            limit,
+            topPairs
         });
         res.json({ rows });
     }
@@ -101,6 +200,20 @@ analyticsRoutes.get("/analytics/plan-merged", async (req, res, next) => {
             statSig: parseQueryArray(req.query.statSig),
             activityLeadType: typeof req.query.activityLeadType === "string" ? req.query.activityLeadType : undefined
         });
+        res.json({ rows });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+analyticsRoutes.get("/analytics/plans-comparison", async (req, res, next) => {
+    try {
+        const mode = req.query.mode === "activity" ? "activity" : "plans";
+        const planId = typeof req.query.planId === "string" ? req.query.planId.trim() : undefined;
+        const startDate = typeof req.query.startDate === "string" ? req.query.startDate : undefined;
+        const endDate = typeof req.query.endDate === "string" ? req.query.endDate : undefined;
+        const plans = await listPlans();
+        const rows = await getPlansComparison({ mode, planId, startDate, endDate, plans });
         res.json({ rows });
     }
     catch (error) {
