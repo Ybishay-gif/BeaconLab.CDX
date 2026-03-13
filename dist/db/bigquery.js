@@ -21,34 +21,7 @@ export async function query(sql, params = {}) {
         queryOptions.types = types;
     }
     const [rows] = await bigquery.query(queryOptions);
-    // BQ client wraps DATE, TIMESTAMP, ARRAY subquery values in {value: x} objects.
-    // Unwrap them so consumers get plain JS primitives.
-    return rows.map(unwrapRow);
-}
-/** Recursively unwrap BigQuery {value} wrappers (BigQueryDate, BigQueryTimestamp, etc.) */
-function unwrapValue(v) {
-    if (v === null || v === undefined)
-        return v;
-    if (Array.isArray(v))
-        return v.map(unwrapValue);
-    if (typeof v === "object") {
-        const obj = v;
-        // BigQueryDate / BigQueryTimestamp / ARRAY element: single `value` key
-        if ("value" in obj && Object.keys(obj).length === 1)
-            return obj.value;
-        // Nested struct — unwrap each field
-        const out = {};
-        for (const [k, val] of Object.entries(obj))
-            out[k] = unwrapValue(val);
-        return out;
-    }
-    return v;
-}
-function unwrapRow(row) {
-    const out = {};
-    for (const [k, v] of Object.entries(row))
-        out[k] = unwrapValue(v);
-    return out;
+    return rows;
 }
 export function table(tableName) {
     return `\`${config.projectId}.${config.dataset}.${tableName}\``;

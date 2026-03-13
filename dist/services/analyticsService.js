@@ -1,9 +1,7 @@
-import { query, table, bqQuery, bqAnalyticsTable, bqAnalyticsRoutine } from "../db/index.js";
+import { analyticsRoutine, analyticsTable, query, table } from "../db/bigquery.js";
 import { config } from "../config.js";
 import { normalizeActivityScopeKey, splitCombinedFilter } from "./shared/activityScope.js";
 import { buildCombinedRatioSql, buildRoeSql } from "./shared/kpiSql.js";
-import { cached, buildCacheKey } from "../cache.js";
-import { getSSPFromDailyPG, listSSPFiltersPG, listPEFiltersPG, getPEBQviaPG, listPlanMergedFiltersPG, getPlanMergedPG, } from "./pgAnalyticsService.js";
 const RAW_CROSS_TACTIC_TABLE = config.rawCrossTacticTable;
 const ALL_US_STATE_CODES = [
     "AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DC", "DE", "FL",
@@ -12,12 +10,8 @@ const ALL_US_STATE_CODES = [
     "NH", "NJ", "NM", "NV", "NY", "OH", "OK", "OR", "PA", "RI",
     "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WA", "WI", "WV", "WY"
 ];
-/** BQ ARRAY(SELECT ...) returns [{value: x}, ...] — unwrap to plain values. */
-function unwrapBqArray(arr) {
-    return (arr ?? []).map((x) => typeof x === "object" && x !== null && "value" in x ? x.value : x);
-}
 function withAllStateCodes(states) {
-    const normalized = unwrapBqArray(states).map((value) => String(value || "").trim().toUpperCase()).filter(Boolean);
+    const normalized = (states ?? []).map((value) => String(value || "").trim().toUpperCase()).filter(Boolean);
     return [...new Set([...ALL_US_STATE_CODES, ...normalized])].sort();
 }
 function parseStrategyRules(raw, activityLeadType) {
@@ -67,15 +61,8 @@ function normalizeCorTargetInput(value) {
     return raw > 2 ? raw / 100 : raw;
 }
 function extractSegmentFromChannelGroup(channelGroup) {
-    const upper = String(channelGroup || "").toUpperCase();
-    const match = upper.match(/\b(MCH|MCR|SCH|SCR)\b/);
-    if (match)
-        return match[1];
-    if (upper.includes("HOME"))
-        return "HOME";
-    if (upper.includes("RENT"))
-        return "RENT";
-    return "";
+    const match = String(channelGroup || "").toUpperCase().match(/\b(MCH|MCR|SCH|SCR)\b/);
+    return match ? match[1] : "";
 }
 function buildPriceDecisionOverrideKey(channelGroupName, state, segment) {
     return `${String(channelGroupName || "")}|${String(state || "").toUpperCase()}|${String(segment || "").toUpperCase()}`;
@@ -137,34 +124,6 @@ function toFiniteNumberOrNull(value) {
     const num = Number(value);
     return Number.isFinite(num) ? num : null;
 }
-// ---------------------------------------------------------------------------
-// Weighted-scoring TP selection
-// ---------------------------------------------------------------------------
-// Strategy weight profiles: each metric is normalized to [0,1] (higher=better)
-// then multiplied by its weight. CPC and CPB are inverted (lower uplift = better).
-//
-//   aggressive : maximize growth (WR, binds), accept higher costs
-//   balanced   : genuine blend of growth + cost efficiency
-//   cautious   : minimize cost (CPC, CPB), accept less growth
-// ---------------------------------------------------------------------------
-const STRATEGY_WEIGHTS = {
-    aggressive: { wr: 0.35, binds: 0.35, cpc: 0.15, cpb: 0.15 },
-    balanced: { wr: 0.25, binds: 0.20, cpc: 0.30, cpb: 0.25 },
-    cautious: { wr: 0.10, binds: 0.15, cpc: 0.45, cpb: 0.30 },
-};
-// Confidence multiplier based on stat_sig tier
-const STAT_SIG_CONFIDENCE = {
-    state: 1.0,
-    channel: 0.85,
-};
-function resolveStrategyKey(raw) {
-    const s = String(raw || "").trim().toLowerCase();
-    if (s.includes("aggressive") || s.includes("high"))
-        return "aggressive";
-    if (s.includes("cautious") || s.includes("cost") || s.includes("low"))
-        return "cautious";
-    return "balanced";
-}
 function chooseRecommendedTestingPoint(rows, rule) {
     if (!rows.length) {
         return 0;
@@ -177,9 +136,9 @@ function chooseRecommendedTestingPoint(rows, rule) {
             ? Number(fallbackByFlag?.testing_point)
             : baselineTestingPoint;
     }
-    // --- Step 1: hard constraint filter ---
     const maxCpc = normalizeUpliftLimit(rule.maxCpcUplift, 0.1);
     const maxCpb = normalizeUpliftLimit(rule.maxCpbUplift, 0.1);
+    const strategy = String(rule.growthStrategy || "balanced").toLowerCase();
     const candidates = rows.filter((row) => {
         const tp = Number(row.testing_point);
         const additionalClicks = Number(row.additional_clicks) || 0;
@@ -195,77 +154,54 @@ function chooseRecommendedTestingPoint(rows, rule) {
     if (!candidates.length) {
         return baselineTestingPoint;
     }
-    // Single candidate — skip scoring
-    if (candidates.length === 1) {
-        return Number(candidates[0].testing_point) || baselineTestingPoint;
-    }
-    // --- Step 2: extract raw metric arrays for min-max normalization ---
-    const wrArr = candidates.map((r) => toFiniteNumberOrNull(r.win_rate_uplift) ?? 0);
-    const bindsArr = candidates.map((r) => Number(r.expected_bind_change) || 0);
-    const cpcArr = candidates.map((r) => toFiniteNumberOrNull(r.cpc_uplift) ?? 0);
-    const cpbArr = candidates.map((r) => toFiniteNumberOrNull(r.cpb_uplift) ?? 0);
-    const minMax = (arr) => {
-        let min = arr[0], max = arr[0];
-        for (const v of arr) {
-            if (v < min)
-                min = v;
-            if (v > max)
-                max = v;
+    const isHighGrowth = strategy === "high" || strategy === "high_growth" || strategy === "aggressive";
+    const isLowGrowth = strategy === "low" || strategy === "cost_focused" || strategy === "cautious";
+    candidates.sort((a, b) => {
+        const aBinds = Number(a.expected_bind_change) || 0;
+        const bBinds = Number(b.expected_bind_change) || 0;
+        const aCpc = toFiniteNumberOrNull(a.cpc_uplift) ?? Number.POSITIVE_INFINITY;
+        const bCpc = toFiniteNumberOrNull(b.cpc_uplift) ?? Number.POSITIVE_INFINITY;
+        const aCpb = toFiniteNumberOrNull(a.cpb_uplift) ?? Number.POSITIVE_INFINITY;
+        const bCpb = toFiniteNumberOrNull(b.cpb_uplift) ?? Number.POSITIVE_INFINITY;
+        const aClicks = Number(a.additional_clicks) || 0;
+        const bClicks = Number(b.additional_clicks) || 0;
+        const aTp = Number(a.testing_point) || 0;
+        const bTp = Number(b.testing_point) || 0;
+        if (isHighGrowth) {
+            if (aBinds !== bBinds)
+                return bBinds - aBinds;
+            if (aClicks !== bClicks)
+                return bClicks - aClicks;
+            if (aCpc !== bCpc)
+                return aCpc - bCpc;
+            if (aCpb !== bCpb)
+                return aCpb - bCpb;
+            return aTp - bTp;
         }
-        return { min, max, range: max - min };
-    };
-    const wrBounds = minMax(wrArr);
-    const bindsBounds = minMax(bindsArr);
-    const cpcBounds = minMax(cpcArr);
-    const cpbBounds = minMax(cpbArr);
-    // Normalize to [0,1]: higher = better
-    // WR & binds: higher value → higher norm
-    // CPC & CPB: lower value → higher norm (inverted)
-    const norm = (val, bounds, invert) => {
-        if (bounds.range === 0)
-            return 0.5;
-        const n = (val - bounds.min) / bounds.range;
-        return invert ? 1 - n : n;
-    };
-    // --- Step 3: weighted scoring ---
-    // COR override: if state's combined_ratio exceeds the tier's corTarget,
-    // force cautious weights to prioritize cost reduction
-    let strategyKey = resolveStrategyKey(rule.growthStrategy);
-    const baselineRow = rows.find((r) => Number(r.testing_point) === 0);
-    const stateCor = toFiniteNumberOrNull(baselineRow?.combined_ratio ?? null);
-    const corTarget = rule.corTarget;
-    if (stateCor !== null && Number.isFinite(corTarget) && corTarget > 0 && stateCor > corTarget) {
-        strategyKey = "cautious";
-    }
-    const w = STRATEGY_WEIGHTS[strategyKey] || STRATEGY_WEIGHTS.balanced;
-    const scored = candidates.map((row, i) => {
-        const nWr = norm(wrArr[i], wrBounds, false);
-        const nBinds = norm(bindsArr[i], bindsBounds, false);
-        const nCpc = norm(cpcArr[i], cpcBounds, true); // inverted: lower CPC = higher score
-        const nCpb = norm(cpbArr[i], cpbBounds, true); // inverted: lower CPB = higher score
-        const rawScore = w.wr * nWr + w.binds * nBinds + w.cpc * nCpc + w.cpb * nCpb;
-        // Confidence from stat_sig tier
-        const confidence = STAT_SIG_CONFIDENCE[String(row.stat_sig || "")] ?? 0.5;
-        return {
-            tp: Number(row.testing_point) || 0,
-            score: rawScore * confidence,
-            // Tiebreakers aligned to strategy
-            binds: Number(row.expected_bind_change) || 0,
-            cpc: toFiniteNumberOrNull(row.cpc_uplift) ?? Infinity,
-        };
-    });
-    // Sort by score DESC, then strategy-aligned tiebreaker
-    scored.sort((a, b) => {
-        if (a.score !== b.score)
-            return b.score - a.score;
-        if (strategyKey === "cautious") {
-            return a.cpc - b.cpc; // lower CPC wins
+        if (isLowGrowth) {
+            if (aCpc !== bCpc)
+                return aCpc - bCpc;
+            if (aCpb !== bCpb)
+                return aCpb - bCpb;
+            if (aBinds !== bBinds)
+                return bBinds - aBinds;
+            if (aClicks !== bClicks)
+                return bClicks - aClicks;
+            return aTp - bTp;
         }
-        return b.binds - a.binds; // more binds wins (aggressive & balanced)
+        if (aBinds !== bBinds)
+            return bBinds - aBinds;
+        if (aClicks !== bClicks)
+            return bClicks - aClicks;
+        if (aCpc !== bCpc)
+            return aCpc - bCpc;
+        if (aCpb !== bCpb)
+            return aCpb - bCpb;
+        return aTp - bTp;
     });
-    return scored[0]?.tp || baselineTestingPoint;
+    return Number(candidates[0]?.testing_point) || baselineTestingPoint;
 }
-export async function getStrategyRulesForPlan(planId, activityLeadType) {
+async function getStrategyRulesForPlan(planId, activityLeadType) {
     const normalizedPlanId = String(planId || "").trim();
     if (!normalizedPlanId) {
         return [];
@@ -293,7 +229,7 @@ async function getPriceDecisionOverridesForPlan(planId, activityLeadType) {
     `, { planId: normalizedPlanId });
     return parsePriceDecisionOverrides(paramRows[0]?.param_value || "", activityLeadType);
 }
-export function normalizeFilters(filters) {
+function normalizeFilters(filters) {
     const states = (filters.states ?? []).map((value) => value.trim()).filter(Boolean);
     const segments = (filters.segments ?? []).map((value) => value.trim().toUpperCase()).filter(Boolean);
     const channelGroups = (filters.channelGroups ?? []).map((value) => value.trim()).filter(Boolean);
@@ -313,7 +249,7 @@ export function normalizeFilters(filters) {
         qbc: Number.isFinite(Number(filters.qbc)) ? Number(filters.qbc) : 0
     };
 }
-export function normalizePriceExplorationFilters(filters) {
+function normalizePriceExplorationFilters(filters) {
     const states = (filters.states ?? []).map((value) => value.trim()).filter(Boolean);
     const channelGroups = (filters.channelGroups ?? []).map((value) => value.trim()).filter(Boolean);
     const combined = splitCombinedFilter(filters.activityLeadType);
@@ -331,11 +267,10 @@ export function normalizePriceExplorationFilters(filters) {
         stateSegmentActivityType: combined.stateSegmentActivityType,
         stateSegmentLeadType: combined.stateSegmentLeadType,
         qbc: Number.isFinite(Number(filters.qbc)) ? Number(filters.qbc) : 0,
-        limit: Number.isFinite(Number(filters.limit)) ? Math.min(Math.max(Number(filters.limit), 1), 200000) : 10000,
-        topPairs: Number.isFinite(Number(filters.topPairs)) ? Math.max(Number(filters.topPairs), 0) : 0
+        limit: Number.isFinite(Number(filters.limit)) ? Math.min(Math.max(Number(filters.limit), 1), 200000) : 50000
     };
 }
-export function normalizePlanMergedFilters(filters) {
+function normalizePlanMergedFilters(filters) {
     const states = (filters.states ?? []).map((value) => value.trim().toUpperCase()).filter(Boolean);
     const segments = (filters.segments ?? []).map((value) => value.trim().toUpperCase()).filter(Boolean);
     const channelGroups = (filters.channelGroups ?? []).map((value) => value.trim()).filter(Boolean);
@@ -360,236 +295,240 @@ export function normalizePlanMergedFilters(filters) {
 }
 export async function listStateSegmentFilters(filters) {
     const normalized = normalizeFilters(filters);
-    if (config.usePgAnalytics)
-        return listSSPFiltersPG(normalized);
-    return listStateSegmentFiltersFromDaily(normalized);
-}
-const VIEW_DIMENSIONS = {
-    state: ["state"],
-    segment: ["segment"],
-    channel_group: ["channel_group_name"],
-    state_segment: ["state", "segment"],
-    state_channel_group: ["state", "channel_group_name"],
-    state_segment_channel: ["state", "segment", "channel_group_name"],
-};
-export async function getStateSegmentPerformanceFromDaily(filters, normalized) {
-    const dims = VIEW_DIMENSIONS[filters.groupBy || "state_segment_channel"]
-        || VIEW_DIMENSIONS.state_segment_channel;
-    const selectDims = [
-        dims.includes("state") ? "state" : "'ALL' AS state",
-        dims.includes("segment") ? "segment" : "'ALL' AS segment",
-        dims.includes("channel_group_name") ? "channel_group_name" : "'ALL' AS channel_group_name",
-    ].join(",\n        ");
-    const groupByClause = dims.join(", ");
-    const cacheKey = buildCacheKey("ssp", {
-        startDate: normalized.startDate,
-        endDate: normalized.endDate,
-        states: normalized.states,
-        segments: normalized.segments,
-        channelGroups: normalized.channelGroups,
-        activityType: normalized.activityType,
-        leadType: normalized.leadType,
-        qbc: normalized.qbc,
-        groupBy: filters.groupBy || "state_segment_channel"
-    });
-    return cached(cacheKey, () => bqQuery(`
-      SELECT
-        ${selectDims},
-        SUM(bids) AS bids,
-        SUM(sold) AS sold,
-        SUM(total_cost) AS total_cost,
-        SUM(quote_started) AS quote_started,
-        SUM(quotes) AS quotes,
-        SUM(binds) AS binds,
-        SAFE_DIVIDE(SUM(binds), NULLIF(SUM(quotes), 0)) AS q2b_score,
-        SUM(scored_policies) AS scored_policies,
-        SAFE_DIVIDE(SUM(total_cost), NULLIF(SUM(binds), 0)) AS cpb,
-        CASE WHEN SUM(binds) = 0 THEN 0
-          ELSE SAFE_DIVIDE(SUM(target_cpb_sum), SUM(binds))
-        END AS target_cpb,
-        SAFE_DIVIDE(
-          CASE WHEN SUM(binds) = 0 THEN 0
-            ELSE SAFE_DIVIDE(SUM(target_cpb_sum), SUM(binds))
-          END,
-          SAFE_DIVIDE(SUM(total_cost), NULLIF(SUM(binds), 0))
-        ) AS performance,
-        ${buildRoeSql({
-        zeroConditions: [
-            "SUM(scored_policies) = 0",
-            "SAFE_DIVIDE(SUM(avg_equity_sum), NULLIF(SUM(scored_policies), 0)) = 0"
-        ],
-        avgProfitExpr: "SAFE_DIVIDE(SUM(avg_profit_sum), NULLIF(SUM(scored_policies), 0))",
-        cpbExpr: "SAFE_DIVIDE(SUM(total_cost), NULLIF(SUM(binds), 0))",
-        avgEquityExpr: "SAFE_DIVIDE(SUM(avg_equity_sum), NULLIF(SUM(scored_policies), 0))"
-    })} AS roe,
-        ${buildCombinedRatioSql({
-        zeroConditions: [
-            "SUM(scored_policies) = 0",
-            "SAFE_DIVIDE(SUM(lifetime_premium_sum), NULLIF(SUM(scored_policies), 0)) = 0"
-        ],
-        cpbExpr: "SAFE_DIVIDE(SUM(total_cost), NULLIF(SUM(binds), 0))",
-        avgLifetimeCostExpr: "SAFE_DIVIDE(SUM(lifetime_cost_sum), NULLIF(SUM(scored_policies), 0))",
-        avgLifetimePremiumExpr: "SAFE_DIVIDE(SUM(lifetime_premium_sum), NULLIF(SUM(scored_policies), 0))"
-    })} AS combined_ratio,
-        SAFE_DIVIDE(SUM(avg_mrltv_sum), NULLIF(SUM(scored_policies), 0)) AS mrltv,
-        SAFE_DIVIDE(SUM(avg_profit_sum), NULLIF(SUM(scored_policies), 0)) AS profit,
-        SAFE_DIVIDE(SUM(avg_equity_sum), NULLIF(SUM(scored_policies), 0)) AS equity,
-        SUM(target_cpb_sum) AS target_cpb_sum,
-        SUM(avg_profit_sum) AS avg_profit_sum,
-        SUM(avg_equity_sum) AS avg_equity_sum,
-        SUM(lifetime_cost_sum) AS lifetime_cost_sum,
-        SUM(lifetime_premium_sum) AS lifetime_premium_sum,
-        SUM(avg_mrltv_sum) AS avg_mrltv_sum
-      FROM \`${config.projectId}.${config.dataset}.state_segment_daily\`
-      WHERE event_date BETWEEN DATE(@startDate) AND DATE(@endDate)
-        AND ("__ALL__" IN UNNEST(@states) OR state IN UNNEST(@states))
-        AND ("__ALL__" IN UNNEST(@segments) OR segment IN UNNEST(@segments))
-        AND ("__ALL__" IN UNNEST(@channelGroups) OR channel_group_name IN UNNEST(@channelGroups))
-        AND (@activityType = "" OR activity_type = @activityType)
-        AND (@leadType = "" OR lead_type = @leadType)
-      GROUP BY ${groupByClause}
-      ORDER BY ${groupByClause}
-    `, normalized));
-}
-export async function listStateSegmentFiltersFromDaily(normalized) {
-    const cacheKey = buildCacheKey("ssp-filters", {
-        startDate: normalized.startDate,
-        endDate: normalized.endDate,
-        activityType: normalized.activityType,
-        leadType: normalized.leadType
-    });
-    return cached(cacheKey, async () => {
-        const rows = await bqQuery(`
-        WITH scoped AS (
-          SELECT state, segment, channel_group_name
-          FROM \`${config.projectId}.${config.dataset}.state_segment_daily\`
-          WHERE (@startDate = "" OR event_date >= DATE(@startDate))
-            AND (@endDate = "" OR event_date <= DATE(@endDate))
-            AND (@activityType = "" OR activity_type = @activityType)
-            AND (@leadType = "" OR lead_type = @leadType)
-        )
+    const rows = await query(`
+      WITH scoped AS (
         SELECT
-          ARRAY(
-            SELECT DISTINCT state
-            FROM scoped
-            WHERE state IS NOT NULL
-            ORDER BY state
-          ) AS states,
-          ARRAY(
-            SELECT DISTINCT segment
-            FROM scoped
-            WHERE segment IS NOT NULL AND segment IN ('MCH', 'MCR', 'SCH', 'SCR', 'HOME', 'RENT')
-            ORDER BY segment
-          ) AS segments,
-          ARRAY(
-            SELECT DISTINCT channel_group_name
-            FROM scoped
-            WHERE channel_group_name IS NOT NULL AND channel_group_name != ''
-            ORDER BY channel_group_name
-          ) AS channel_groups
-      `, normalized);
-        const first = rows[0];
-        return {
-            states: withAllStateCodes(first?.states),
-            segments: unwrapBqArray(first?.segments),
-            channel_groups: unwrapBqArray(first?.channel_groups)
-        };
-    });
+          DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) AS event_date,
+          Data_State AS state,
+          COALESCE(
+            NULLIF(TRIM(ChannelGroupName), ''),
+            NULLIF(TRIM(CAST(Account_Name AS STRING)), ''),
+            ''
+          ) AS channel_group_name,
+          UPPER(
+            COALESCE(
+              NULLIF(TRIM(Segments), ''),
+              REGEXP_EXTRACT(UPPER(COALESCE(ChannelGroupName, '')), r'(MCH|MCR|SCH|SCR)')
+            )
+          ) AS segment
+        FROM ${RAW_CROSS_TACTIC_TABLE}
+        WHERE (@startDate = "" OR DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) >= DATE(@startDate))
+          AND (@endDate = "" OR DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) <= DATE(@endDate))
+          AND (@stateSegmentActivityType = "" OR LOWER(activitytype) = LOWER(@stateSegmentActivityType))
+          AND (@stateSegmentLeadType = "" OR LOWER(Leadtype) = LOWER(@stateSegmentLeadType))
+      )
+      SELECT
+        ARRAY(
+          SELECT DISTINCT state
+          FROM scoped
+          WHERE state IS NOT NULL
+          ORDER BY state
+        ) AS states,
+        ARRAY(
+          SELECT DISTINCT segment
+          FROM scoped
+          WHERE segment IS NOT NULL AND segment IN ('MCH', 'MCR', 'SCH', 'SCR')
+          ORDER BY segment
+        ) AS segments,
+        ARRAY(
+          SELECT DISTINCT channel_group_name
+          FROM scoped
+          WHERE channel_group_name IS NOT NULL AND channel_group_name != ''
+          ORDER BY channel_group_name
+        ) AS channel_groups
+    `, normalized);
+    const first = rows[0];
+    return {
+        states: withAllStateCodes(first?.states),
+        segments: first?.segments ?? [],
+        channel_groups: first?.channel_groups ?? []
+    };
 }
 export async function getStateSegmentPerformance(filters) {
     const normalized = normalizeFilters(filters);
-    if (config.usePgAnalytics)
-        return getSSPFromDailyPG(filters, normalized);
-    return getStateSegmentPerformanceFromDaily(filters, normalized);
+    return query(`
+      WITH base AS (
+        SELECT
+          DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) AS event_date,
+          Data_State AS state,
+          COALESCE(
+            NULLIF(TRIM(ChannelGroupName), ''),
+            NULLIF(TRIM(CAST(Account_Name AS STRING)), ''),
+            ''
+          ) AS channel_group_name,
+          UPPER(
+            COALESCE(
+              NULLIF(TRIM(Segments), ''),
+              REGEXP_EXTRACT(
+                UPPER(
+                  COALESCE(
+                    NULLIF(TRIM(ChannelGroupName), ''),
+                    NULLIF(TRIM(CAST(Account_Name AS STRING)), ''),
+                    ''
+                  )
+                ),
+                r'(MCH|MCR|SCH|SCR)'
+              )
+            )
+          ) AS segment,
+          SAFE_CAST(bid_count AS FLOAT64) AS bid_count,
+          SAFE_CAST(Transaction_sold AS FLOAT64) AS transaction_sold,
+          SAFE_CAST(TransactionSold AS FLOAT64) AS transaction_sold_alt,
+          SAFE_CAST(Price AS FLOAT64) AS price,
+          SAFE_CAST(TotalQuotes AS FLOAT64) AS total_quote,
+          SAFE_CAST(TotalBinds AS FLOAT64) AS total_binds,
+          SAFE_CAST(AutoOnlineQuotesStart AS FLOAT64) AS quote_started,
+          SAFE_CAST(ScoredPolicies AS FLOAT64) AS scored_policies,
+          SAFE_CAST(LifetimePremium AS FLOAT64) AS lifetime_premium,
+          SAFE_CAST(LifeTimeCost AS FLOAT64) AS lifetime_cost,
+          SAFE_CAST(CustomValues_Mrltv AS FLOAT64) AS avg_mrltv,
+          SAFE_CAST(CustomValues_Profit AS FLOAT64) AS avg_profit,
+          SAFE_CAST(Equity AS FLOAT64) AS avg_equity,
+          SAFE_CAST(Target_TargetCPB AS FLOAT64) AS target_cpb
+        FROM ${RAW_CROSS_TACTIC_TABLE}
+        WHERE (@stateSegmentActivityType = "" OR LOWER(activitytype) = LOWER(@stateSegmentActivityType))
+          AND (@stateSegmentLeadType = "" OR LOWER(Leadtype) = LOWER(@stateSegmentLeadType))
+      )
+      SELECT
+        state,
+        segment,
+        channel_group_name,
+        SUM(COALESCE(bid_count, 0)) AS bids,
+        SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)) AS sold,
+        SUM(COALESCE(price, 0)) AS total_cost,
+        SUM(COALESCE(quote_started, 0)) AS quote_started,
+        SUM(COALESCE(total_quote, 0)) AS quotes,
+        SUM(COALESCE(total_binds, 0)) AS binds,
+        SAFE_DIVIDE(
+          SUM(COALESCE(total_binds, 0)),
+          NULLIF(SUM(COALESCE(total_quote, 0)), 0)
+        ) AS q2b_score,
+        SUM(COALESCE(scored_policies, 0)) AS scored_policies,
+        SAFE_DIVIDE(
+          SUM(COALESCE(price, 0)),
+          NULLIF(SUM(COALESCE(total_binds, 0)), 0)
+        ) AS cpb,
+        CASE
+          WHEN SUM(COALESCE(total_binds, 0)) = 0 THEN 0
+          ELSE SAFE_DIVIDE(
+            SUM(COALESCE(target_cpb, 0)),
+            SUM(COALESCE(total_binds, 0))
+          )
+        END AS target_cpb,
+        SAFE_DIVIDE(
+          CASE
+            WHEN SUM(COALESCE(total_binds, 0)) = 0 THEN 0
+            ELSE SAFE_DIVIDE(
+              SUM(COALESCE(target_cpb, 0)),
+              SUM(COALESCE(total_binds, 0))
+            )
+          END,
+          SAFE_DIVIDE(
+            SUM(COALESCE(price, 0)),
+            NULLIF(SUM(COALESCE(total_binds, 0)), 0)
+          )
+        ) AS performance,
+        ${buildRoeSql({
+        zeroConditions: [
+            "SUM(COALESCE(scored_policies, 0)) = 0",
+            "SAFE_DIVIDE(SUM(COALESCE(avg_equity, 0)), NULLIF(SUM(COALESCE(scored_policies, 0)), 0)) = 0"
+        ],
+        avgProfitExpr: "SAFE_DIVIDE(SUM(COALESCE(avg_profit, 0)), NULLIF(SUM(COALESCE(scored_policies, 0)), 0))",
+        cpbExpr: "SAFE_DIVIDE(SUM(COALESCE(price, 0)), NULLIF(SUM(COALESCE(total_binds, 0)), 0))",
+        avgEquityExpr: "SAFE_DIVIDE(SUM(COALESCE(avg_equity, 0)), NULLIF(SUM(COALESCE(scored_policies, 0)), 0))"
+    })} AS roe,
+        ${buildCombinedRatioSql({
+        zeroConditions: [
+            "SUM(COALESCE(scored_policies, 0)) = 0",
+            "SAFE_DIVIDE(SUM(COALESCE(lifetime_premium, 0)), NULLIF(SUM(COALESCE(scored_policies, 0)), 0)) = 0"
+        ],
+        cpbExpr: "SAFE_DIVIDE(SUM(COALESCE(price, 0)), NULLIF(SUM(COALESCE(total_binds, 0)), 0))",
+        avgLifetimeCostExpr: "SAFE_DIVIDE(SUM(COALESCE(lifetime_cost, 0)), NULLIF(SUM(COALESCE(scored_policies, 0)), 0))",
+        avgLifetimePremiumExpr: "SAFE_DIVIDE(SUM(COALESCE(lifetime_premium, 0)), NULLIF(SUM(COALESCE(scored_policies, 0)), 0))"
+    })} AS combined_ratio,
+        SAFE_DIVIDE(
+          SUM(COALESCE(avg_mrltv, 0) * COALESCE(scored_policies, 0)),
+          NULLIF(SUM(COALESCE(scored_policies, 0)), 0)
+        ) AS mrltv,
+        SAFE_DIVIDE(
+          SUM(COALESCE(avg_profit, 0)),
+          NULLIF(SUM(COALESCE(scored_policies, 0)), 0)
+        ) AS profit,
+        SAFE_DIVIDE(
+          SUM(COALESCE(avg_equity, 0)),
+          NULLIF(SUM(COALESCE(scored_policies, 0)), 0)
+        ) AS equity
+      FROM base
+      WHERE (@startDate = "" OR event_date >= DATE(@startDate))
+        AND (@endDate = "" OR event_date <= DATE(@endDate))
+        AND ("__ALL__" IN UNNEST(@states) OR state IN UNNEST(@states))
+        AND ("__ALL__" IN UNNEST(@segments) OR segment IN UNNEST(@segments))
+        AND ("__ALL__" IN UNNEST(@channelGroups) OR channel_group_name IN UNNEST(@channelGroups))
+        AND segment IN ('MCH', 'MCR', 'SCH', 'SCR')
+      GROUP BY state, segment, channel_group_name
+      ORDER BY state, segment, channel_group_name
+    `, normalized);
 }
 export async function listPriceExplorationFilters(filters) {
     const normalized = normalizePriceExplorationFilters(filters);
-    if (config.usePgAnalytics)
-        return listPEFiltersPG(normalized);
-    const cacheKey = buildCacheKey("pe-filters", {
-        startDate: normalized.startDate,
-        endDate: normalized.endDate,
-        activityType: normalized.activityType,
-        leadType: normalized.leadType
-    });
-    return cached(cacheKey, async () => {
-        const rows = await bqQuery(`
-        WITH raw AS (
-          SELECT
-            Data_State AS state,
-            ChannelGroupName AS channel_group_name,
-            LOWER(COALESCE(activitytype, '')) AS activity_type_raw,
-            LOWER(COALESCE(Leadtype, '')) AS lead_type_raw
-          FROM ${RAW_CROSS_TACTIC_TABLE}
-          WHERE Data_State IS NOT NULL
-            AND ChannelGroupName IS NOT NULL
-            AND SAFE_CAST(PriceAdjustmentPercent AS INT64) IS NOT NULL
-            AND (@startDate = "" OR DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) >= DATE(@startDate))
-            AND (@endDate = "" OR DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) <= DATE(@endDate))
-        ),
-        scoped AS (
-          SELECT
-            state,
-            channel_group_name,
-            CASE
-              WHEN activity_type_raw LIKE 'click%' THEN 'clicks'
-              WHEN activity_type_raw LIKE 'lead%' THEN 'leads'
-              WHEN activity_type_raw LIKE 'call%' THEN 'calls'
-              ELSE ''
-            END AS activity_group,
-            CASE
-              WHEN lead_type_raw LIKE '%car%' THEN 'auto'
-              WHEN lead_type_raw LIKE '%home%' THEN 'home'
-              ELSE ''
-            END AS lead_group
-          FROM raw
-        )
+    const rows = await query(`
+      WITH raw AS (
         SELECT
-          ARRAY(
-            SELECT DISTINCT state
-            FROM scoped
-            WHERE state IS NOT NULL
-              AND (@activityType = "" OR activity_group = @activityType)
-              AND (@leadType = "" OR lead_group = @leadType)
-            ORDER BY state
-          ) AS states,
-          ARRAY(
-            SELECT DISTINCT channel_group_name
-            FROM scoped
-            WHERE channel_group_name IS NOT NULL
-              AND (@activityType = "" OR activity_group = @activityType)
-              AND (@leadType = "" OR lead_group = @leadType)
-            ORDER BY channel_group_name
-          ) AS channel_groups
-      `, normalized);
-        const first = rows[0];
-        return {
-            states: withAllStateCodes(first?.states),
-            channelGroups: unwrapBqArray(first?.channel_groups)
-        };
-    });
+          Data_State AS state,
+          ChannelGroupName AS channel_group_name,
+          LOWER(COALESCE(activitytype, '')) AS activity_type_raw,
+          LOWER(COALESCE(Leadtype, '')) AS lead_type_raw
+        FROM ${RAW_CROSS_TACTIC_TABLE}
+        WHERE Data_State IS NOT NULL
+          AND ChannelGroupName IS NOT NULL
+          AND SAFE_CAST(PriceAdjustmentPercent AS INT64) IS NOT NULL
+          AND (@startDate = "" OR DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) >= DATE(@startDate))
+          AND (@endDate = "" OR DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) <= DATE(@endDate))
+      ),
+      scoped AS (
+        SELECT
+          state,
+          channel_group_name,
+          CASE
+            WHEN activity_type_raw LIKE 'click%' THEN 'clicks'
+            WHEN activity_type_raw LIKE 'lead%' THEN 'leads'
+            WHEN activity_type_raw LIKE 'call%' THEN 'calls'
+            ELSE ''
+          END AS activity_group,
+          CASE
+            WHEN lead_type_raw LIKE '%car%' THEN 'auto'
+            WHEN lead_type_raw LIKE '%home%' THEN 'home'
+            ELSE ''
+          END AS lead_group
+        FROM raw
+      )
+      SELECT
+        ARRAY(
+          SELECT DISTINCT state
+          FROM scoped
+          WHERE state IS NOT NULL
+            AND (@activityType = "" OR activity_group = @activityType)
+            AND (@leadType = "" OR lead_group = @leadType)
+          ORDER BY state
+        ) AS states,
+        ARRAY(
+          SELECT DISTINCT channel_group_name
+          FROM scoped
+          WHERE channel_group_name IS NOT NULL
+            AND (@activityType = "" OR activity_group = @activityType)
+            AND (@leadType = "" OR lead_group = @leadType)
+          ORDER BY channel_group_name
+        ) AS channel_groups
+    `, normalized);
+    const first = rows[0];
+    return {
+        states: withAllStateCodes(first?.states),
+        channelGroups: first?.channel_groups ?? []
+    };
 }
-/**
- * Cached BQ-only portion of Price Exploration.
- * Returns raw rows with SQL-level recommended_testing_point (basic cpb_uplift heuristic).
- * Strategy rules and PE decisions are applied AFTER this function returns, so
- * user changes take effect immediately without cache invalidation.
- */
-export async function getPriceExplorationBQ(normalized) {
-    const cacheKey = buildCacheKey("pe-bq", {
-        startDate: normalized.startDate,
-        endDate: normalized.endDate,
-        q2bStartDate: normalized.q2bStartDate,
-        q2bEndDate: normalized.q2bEndDate,
-        states: normalized.states,
-        channelGroups: normalized.channelGroups,
-        activityType: normalized.activityType,
-        leadType: normalized.leadType,
-        qbc: normalized.qbc,
-        limit: normalized.limit,
-        topPairs: normalized.topPairs
-    });
-    return cached(cacheKey, () => bqQuery(`
+export async function getPriceExploration(filters) {
+    const normalized = normalizePriceExplorationFilters(filters);
+    const rows = await query(`
       WITH raw_all AS (
         SELECT
           ChannelGroupName AS channel_group_name,
@@ -728,7 +667,6 @@ export async function getPriceExplorationBQ(normalized) {
           price_adjustment_percent,
           SUM(bids) AS channel_bids,
           SUM(sold) AS channel_sold,
-          SUM(total_spend) AS channel_total_spend,
           SAFE_DIVIDE(SUM(sold), NULLIF(SUM(bids), 0)) AS channel_win_rate,
           SAFE_DIVIDE(SUM(total_spend), NULLIF(SUM(sold), 0)) AS channel_cpc
         FROM (
@@ -759,27 +697,7 @@ export async function getPriceExplorationBQ(normalized) {
           cb.channel_win_rate AS channel_baseline_win_rate,
           cb.channel_cpc AS channel_baseline_cpc,
           cb.channel_bids AS channel_baseline_bids,
-          cb.channel_sold AS channel_baseline_sold,
-          -- Channel metrics excluding this state (subtraction: channel_total - this_state)
-          -- Used for the 50-199 bids fallback so the state doesn't inflate its own channel benchmark
-          SAFE_DIVIDE(
-            c.channel_sold - COALESCE(s.sold, 0),
-            NULLIF(c.channel_bids - COALESCE(s.bids, 0), 0)
-          ) AS channel_ex_win_rate,
-          SAFE_DIVIDE(
-            c.channel_total_spend - COALESCE(s.total_spend, 0),
-            NULLIF(c.channel_sold - COALESCE(s.sold, 0), 0)
-          ) AS channel_ex_cpc,
-          SAFE_DIVIDE(
-            cb.channel_sold - COALESCE(b.sold, 0),
-            NULLIF(cb.channel_bids - COALESCE(b.bids, 0), 0)
-          ) AS channel_baseline_ex_win_rate,
-          SAFE_DIVIDE(
-            cb.channel_total_spend - COALESCE(b.total_spend, 0),
-            NULLIF(cb.channel_sold - COALESCE(b.sold, 0), 0)
-          ) AS channel_baseline_ex_cpc,
-          -- Channel bids excluding this state (for 600-bid channel threshold)
-          (c.channel_bids - COALESCE(s.bids, 0)) AS channel_ex_bids
+          cb.channel_sold AS channel_baseline_sold
         FROM state_tp s
         LEFT JOIN state_tp b
           ON b.channel_group_name = s.channel_group_name
@@ -797,6 +715,29 @@ export async function getPriceExplorationBQ(normalized) {
          AND cb.activity_group = s.activity_group
          AND cb.lead_group = s.lead_group
          AND cb.price_adjustment_percent = 0
+      ),
+      scored AS (
+        SELECT
+          *,
+          SAFE_DIVIDE(
+            win_rate - baseline_win_rate,
+            SQRT(
+              SAFE_DIVIDE((sold + baseline_sold), NULLIF((bids + baseline_bids), 0))
+              * (1 - SAFE_DIVIDE((sold + baseline_sold), NULLIF((bids + baseline_bids), 0)))
+              * (SAFE_DIVIDE(1, NULLIF(bids, 0)) + SAFE_DIVIDE(1, NULLIF(baseline_bids, 0)))
+            )
+          ) AS z_state,
+          SAFE_DIVIDE(
+            channel_win_rate - channel_baseline_win_rate,
+            SQRT(
+              SAFE_DIVIDE((channel_sold + channel_baseline_sold), NULLIF((channel_bids + channel_baseline_bids), 0))
+              * (
+                1 - SAFE_DIVIDE((channel_sold + channel_baseline_sold), NULLIF((channel_bids + channel_baseline_bids), 0))
+              )
+              * (SAFE_DIVIDE(1, NULLIF(channel_bids, 0)) + SAFE_DIVIDE(1, NULLIF(channel_baseline_bids, 0)))
+            )
+          ) AS z_channel
+        FROM joined
       ),
       per_group AS (
         SELECT
@@ -819,20 +760,18 @@ export async function getPriceExplorationBQ(normalized) {
           avg_bid,
           cpc,
           total_spend,
-          -- Sample-size classification:
-          -- 'baseline'     : testing_point = 0
-          -- 'disqualified' : bids < 50, or sold < 15, or channel fallback with < 600 channel_ex_bids
-          -- 'channel'      : 50-199 bids + >= 600 channel_ex_bids — blend state + channel uplifts
-          -- 'state'        : >= 200 bids + >= 15 sold — use state-level directly
           CASE
-            WHEN price_adjustment_percent = 0          THEN 'baseline'
-            WHEN bids < 50                             THEN 'disqualified'
-            WHEN sold < 15                             THEN 'disqualified'
-            WHEN bids >= 200                           THEN 'state'
-            WHEN COALESCE(channel_ex_bids, 0) < 600   THEN 'disqualified'
-            ELSE                                            'channel'
+            WHEN price_adjustment_percent = 0 THEN 'baseline'
+            WHEN ABS(z_state) >= 2.58 THEN 'high'
+            WHEN ABS(z_state) >= 1.96 THEN 'mid'
+            ELSE 'low'
           END AS stat_sig,
-          -- State-level uplifts (used when stat_sig = 'state')
+          CASE
+            WHEN price_adjustment_percent = 0 THEN 'baseline'
+            WHEN ABS(z_channel) >= 2.58 THEN 'high'
+            WHEN ABS(z_channel) >= 1.96 THEN 'mid'
+            ELSE 'low'
+          END AS stat_sig_channel_group,
           CASE
             WHEN price_adjustment_percent = 0 THEN NULL
             ELSE SAFE_DIVIDE(cpc - baseline_cpc, NULLIF(baseline_cpc, 0))
@@ -841,40 +780,19 @@ export async function getPriceExplorationBQ(normalized) {
             WHEN price_adjustment_percent = 0 THEN NULL
             ELSE SAFE_DIVIDE(win_rate - baseline_win_rate, NULLIF(baseline_win_rate, 0))
           END AS win_rate_uplift_state,
-          -- Channel-level uplifts: weighted blend of state + channel (excl. state)
-          -- Gives the state's own signal proportional weight even at 50-199 bids
           CASE
             WHEN price_adjustment_percent = 0 THEN NULL
-            ELSE SAFE_DIVIDE(
-              COALESCE(SAFE_DIVIDE(cpc - baseline_cpc, NULLIF(baseline_cpc, 0)), 0) * bids
-              + COALESCE(SAFE_DIVIDE(channel_ex_cpc - channel_baseline_ex_cpc, NULLIF(channel_baseline_ex_cpc, 0)), 0) * COALESCE(channel_ex_bids, 0),
-              NULLIF(bids + COALESCE(channel_ex_bids, 0), 0)
-            )
+            ELSE SAFE_DIVIDE(channel_cpc - channel_baseline_cpc, NULLIF(channel_baseline_cpc, 0))
           END AS cpc_uplift_channel,
           CASE
             WHEN price_adjustment_percent = 0 THEN NULL
-            ELSE SAFE_DIVIDE(
-              COALESCE(SAFE_DIVIDE(win_rate - baseline_win_rate, NULLIF(baseline_win_rate, 0)), 0) * bids
-              + COALESCE(SAFE_DIVIDE(channel_ex_win_rate - channel_baseline_ex_win_rate, NULLIF(channel_baseline_ex_win_rate, 0)), 0) * COALESCE(channel_ex_bids, 0),
-              NULLIF(bids + COALESCE(channel_ex_bids, 0), 0)
-            )
+            ELSE SAFE_DIVIDE(channel_win_rate - channel_baseline_win_rate, NULLIF(channel_baseline_win_rate, 0))
           END AS win_rate_uplift_channel,
           CASE
-            WHEN price_adjustment_percent = 0          THEN NULL
-            WHEN bids < 50                             THEN NULL
-            WHEN sold < 15                             THEN NULL
-            WHEN bids >= 200                           THEN (win_rate - baseline_win_rate) * bids
-            WHEN COALESCE(channel_ex_bids, 0) < 600   THEN NULL
-            ELSE
-              -- Blended absolute WR diff × state bids
-              SAFE_DIVIDE(
-                (win_rate - COALESCE(baseline_win_rate, 0)) * bids
-                + (COALESCE(channel_ex_win_rate, 0) - COALESCE(channel_baseline_ex_win_rate, 0)) * COALESCE(channel_ex_bids, 0),
-                NULLIF(bids + COALESCE(channel_ex_bids, 0), 0)
-              ) * bids
-          END AS additional_clicks,
-          channel_ex_bids
-        FROM joined
+            WHEN price_adjustment_percent = 0 THEN NULL
+            ELSE ((CASE WHEN ABS(z_state) >= 1.96 THEN win_rate ELSE channel_win_rate END) - baseline_win_rate) * bids
+          END AS additional_clicks
+        FROM scored
       ),
       final_agg AS (
         SELECT
@@ -943,16 +861,18 @@ export async function getPriceExplorationBQ(normalized) {
             NULLIF(SUM(IF(cpc_uplift_channel IS NULL, 0, sold)), 0)
           ) AS cpc_uplift_channel,
           SUM(COALESCE(additional_clicks, 0)) AS additional_clicks,
-          MAX(COALESCE(channel_ex_bids, 0)) AS channel_ex_bids,
-          -- Re-apply thresholds on the aggregated totals
           CASE
-            WHEN testing_point = 0                             THEN 'baseline'
-            WHEN SUM(bids) < 50                                THEN 'disqualified'
-            WHEN SUM(sold) < 15                                THEN 'disqualified'
-            WHEN SUM(bids) >= 200                              THEN 'state'
-            WHEN MAX(COALESCE(channel_ex_bids, 0)) < 600      THEN 'disqualified'
-            ELSE                                                    'channel'
-          END AS stat_sig
+            WHEN testing_point = 0 THEN 'baseline'
+            WHEN COUNTIF(stat_sig = 'high') > 0 THEN 'high'
+            WHEN COUNTIF(stat_sig = 'mid') > 0 THEN 'mid'
+            ELSE 'low'
+          END AS stat_sig,
+          CASE
+            WHEN testing_point = 0 THEN 'baseline'
+            WHEN COUNTIF(stat_sig_channel_group = 'high') > 0 THEN 'high'
+            WHEN COUNTIF(stat_sig_channel_group = 'mid') > 0 THEN 'mid'
+            ELSE 'low'
+          END AS stat_sig_channel_group
         FROM per_group
         GROUP BY channel_group_name, state, testing_point
       ),
@@ -961,8 +881,10 @@ export async function getPriceExplorationBQ(normalized) {
           *,
           SUM(bids) OVER (PARTITION BY channel_group_name, state) AS total_bids_channel_state,
           SUM(sold) OVER (PARTITION BY channel_group_name, state) AS current_sold_channel_state,
-          SUM(quotes) OVER (PARTITION BY channel_group_name, state) AS state_ch_quotes,
-          SUM(total_spend) OVER (PARTITION BY channel_group_name, state) AS current_spend_channel_state
+          SUM(quotes) OVER (PARTITION BY channel_group_name, state) AS channel_quote,
+          SUM(total_spend) OVER (PARTITION BY channel_group_name, state) AS current_spend_channel_state,
+          SUM(quotes) OVER (PARTITION BY state, testing_point) AS state_quotes,
+          SUM(sold) OVER (PARTITION BY state, testing_point) AS state_sold
         FROM final_agg
       ),
       with_expected AS (
@@ -973,13 +895,7 @@ export async function getPriceExplorationBQ(normalized) {
           MAX(IF(testing_point = 0, cpc, NULL)) OVER (PARTITION BY channel_group_name, state)
             AS baseline_cpc_channel_state,
           (win_rate * total_bids_channel_state) AS expected_clicks,
-          (win_rate * total_bids_channel_state * cpc) AS expected_total_cost,
-          -- Baseline expected clicks for delta calculations
-          MAX(IF(testing_point = 0, win_rate * total_bids_channel_state, NULL))
-            OVER (PARTITION BY channel_group_name, state) AS baseline_expected_clicks,
-          -- Baseline expected cost for delta calculations
-          MAX(IF(testing_point = 0, win_rate * total_bids_channel_state * cpc, NULL))
-            OVER (PARTITION BY channel_group_name, state) AS baseline_expected_cost
+          (win_rate * total_bids_channel_state * cpc) AS expected_total_cost
         FROM with_budget
       ),
       state_channel_binds AS (
@@ -1004,45 +920,6 @@ export async function getPriceExplorationBQ(normalized) {
         FROM base_filtered
         GROUP BY channel_group_name, state
       ),
-      ssd_metrics AS (
-        SELECT
-          channel_group_name,
-          state,
-          SUM(binds) AS ssd_binds,
-          SUM(quotes) AS ssd_quotes,
-          SAFE_DIVIDE(SUM(binds), NULLIF(SUM(quotes), 0)) AS ssd_q2b,
-          SAFE_DIVIDE(
-            CASE WHEN SUM(binds) = 0 THEN 0
-              ELSE SAFE_DIVIDE(SUM(target_cpb_sum), SUM(binds))
-            END,
-            SAFE_DIVIDE(SUM(total_cost), NULLIF(SUM(binds), 0))
-          ) AS ssd_performance,
-          ${buildRoeSql({
-        zeroConditions: [
-            "SUM(scored_policies) = 0",
-            "SAFE_DIVIDE(SUM(avg_equity_sum), NULLIF(SUM(scored_policies), 0)) = 0"
-        ],
-        avgProfitExpr: "SAFE_DIVIDE(SUM(avg_profit_sum), NULLIF(SUM(scored_policies), 0))",
-        cpbExpr: "SAFE_DIVIDE(SUM(total_cost), NULLIF(SUM(binds), 0))",
-        avgEquityExpr: "SAFE_DIVIDE(SUM(avg_equity_sum), NULLIF(SUM(scored_policies), 0))"
-    })} AS ssd_roe,
-          ${buildCombinedRatioSql({
-        zeroConditions: [
-            "SUM(scored_policies) = 0",
-            "SAFE_DIVIDE(SUM(lifetime_premium_sum), NULLIF(SUM(scored_policies), 0)) = 0"
-        ],
-        cpbExpr: "SAFE_DIVIDE(SUM(total_cost), NULLIF(SUM(binds), 0))",
-        avgLifetimeCostExpr: "SAFE_DIVIDE(SUM(lifetime_cost_sum), NULLIF(SUM(scored_policies), 0))",
-        avgLifetimePremiumExpr: "SAFE_DIVIDE(SUM(lifetime_premium_sum), NULLIF(SUM(scored_policies), 0))"
-    })} AS ssd_combined_ratio
-        FROM ${bqAnalyticsTable("state_segment_daily")}
-        WHERE event_date BETWEEN DATE(@startDate) AND DATE(@endDate)
-          AND ("__ALL__" IN UNNEST(@states) OR state IN UNNEST(@states))
-          AND ("__ALL__" IN UNNEST(@channelGroups) OR channel_group_name IN UNNEST(@channelGroups))
-          AND (@activityType = "" OR activity_type = @activityType)
-          AND (@leadType = "" OR lead_type = @leadType)
-        GROUP BY channel_group_name, state
-      ),
       channel_binds AS (
         SELECT
           channel_group_name,
@@ -1050,120 +927,42 @@ export async function getPriceExplorationBQ(normalized) {
         FROM base_all
         GROUP BY channel_group_name
       ),
-      -- Channel-wide quotes and click-to-quote rate (all states, all TPs) for display
-      channel_quotes_all AS (
-        SELECT
-          channel_group_name,
-          SUM(COALESCE(total_quotes, 0)) AS channel_quote,
-          -- quotes / sold (channel-wide)
-          SAFE_DIVIDE(
-            SUM(COALESCE(total_quotes, 0)),
-            NULLIF(SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)), 0)
-          ) AS click_to_channel_quote
-        FROM base_all
-        GROUP BY channel_group_name
-      ),
       q2b_source AS (
         SELECT
-          channel_group_name,
           state,
-          SAFE_DIVIDE(SUM(COALESCE(binds, 0)), NULLIF(SUM(COALESCE(quotes, 0)), 0)) AS q2b
-        FROM ${bqAnalyticsTable("state_segment_daily")}
+          segment,
+          SAFE_DIVIDE(SUM(COALESCE(total_binds, 0)), NULLIF(SUM(COALESCE(total_quote, 0)), 0)) AS q2b
+        FROM ${analyticsTable("v_state_segment_performance_daily")}
         WHERE (@q2bStartDate = "" OR event_date >= DATE(@q2bStartDate))
           AND (@q2bEndDate = "" OR event_date <= DATE(@q2bEndDate))
-        GROUP BY channel_group_name, state
+        GROUP BY state, segment
       ),
       q2b_channel AS (
         SELECT
-          channel_group_name,
-          SAFE_DIVIDE(SUM(COALESCE(binds, 0)), NULLIF(SUM(COALESCE(quotes, 0)), 0)) AS channel_q2b
-        FROM ${bqAnalyticsTable("state_segment_daily")}
+          segment,
+          SAFE_DIVIDE(SUM(COALESCE(total_binds, 0)), NULLIF(SUM(COALESCE(total_quote, 0)), 0)) AS channel_q2b
+        FROM ${analyticsTable("v_state_segment_performance_daily")}
         WHERE (@q2bStartDate = "" OR event_date >= DATE(@q2bStartDate))
           AND (@q2bEndDate = "" OR event_date <= DATE(@q2bEndDate))
-        GROUP BY channel_group_name
-      ),
-      -- Q2B state-level fallback: product-market fit is state-driven
-      q2b_state AS (
-        SELECT
-          state,
-          SAFE_DIVIDE(SUM(COALESCE(binds, 0)), NULLIF(SUM(COALESCE(quotes, 0)), 0)) AS state_q2b
-        FROM ${bqAnalyticsTable("state_segment_daily")}
-        WHERE (@q2bStartDate = "" OR event_date >= DATE(@q2bStartDate))
-          AND (@q2bEndDate = "" OR event_date <= DATE(@q2bEndDate))
-        GROUP BY state
-      ),
-      -- Quote rate: state+channel (≥50 quotes) → channel fallback
-      -- Quote rate = intent signal → driven by channel/segment
-      quote_rate_calc AS (
-        SELECT
-          with_expected.*,
-          CASE
-            WHEN COALESCE(state_ch_quotes, 0) >= 50
-              THEN SAFE_DIVIDE(state_ch_quotes, NULLIF(current_sold_channel_state, 0))
-            ELSE COALESCE(channel_quotes_all.click_to_channel_quote, 0)
-          END AS quote_rate,
-          -- Q2B: product-market fit → state-driven fallback
-          CASE
-            WHEN COALESCE(state_channel_binds.binds_state_channel, 0) >= 5 AND q2b_source.q2b IS NOT NULL
-              THEN q2b_source.q2b
-            ELSE COALESCE(q2b_state.state_q2b, 0)
-          END AS q2b_rate,
-          state_channel_binds.binds_state_channel,
-          q2b_source.q2b,
-          channel_binds.channel_binds,
-          q2b_channel.channel_q2b,
-          channel_quotes_all.channel_quote,
-          channel_quotes_all.click_to_channel_quote
-        FROM with_expected
-        LEFT JOIN q2b_source
-          ON q2b_source.channel_group_name = with_expected.channel_group_name
-         AND q2b_source.state = with_expected.state
-        LEFT JOIN state_channel_binds
-          ON state_channel_binds.channel_group_name = with_expected.channel_group_name
-         AND state_channel_binds.state = with_expected.state
-        LEFT JOIN channel_binds
-          ON channel_binds.channel_group_name = with_expected.channel_group_name
-        LEFT JOIN channel_quotes_all
-          ON channel_quotes_all.channel_group_name = with_expected.channel_group_name
-        LEFT JOIN q2b_channel
-          ON q2b_channel.channel_group_name = with_expected.channel_group_name
-        LEFT JOIN q2b_state
-          ON q2b_state.state = with_expected.state
-      ),
-      -- Compute expected_binds from scratch: expected_clicks × quote_rate × Q2B
-      with_expected_binds AS (
-        SELECT
-          *,
-          (expected_clicks * quote_rate * q2b_rate) AS expected_binds,
-          -- Baseline expected binds for delta calculations
-          MAX(IF(testing_point = 0, expected_clicks * quote_rate * q2b_rate, NULL))
-            OVER (PARTITION BY channel_group_name, state) AS baseline_expected_binds,
-          -- Baseline expected CPB: baseline_expected_cost / actual_binds
-          MAX(IF(testing_point = 0,
-            SAFE_DIVIDE(
-              expected_clicks * cpc,
-              NULLIF(binds_state_channel, 0)
-            ), NULL))
-            OVER (PARTITION BY channel_group_name, state) AS baseline_expected_cpb
-        FROM quote_rate_calc
+        GROUP BY segment
       ),
       final_rows AS (
         SELECT
-          channel_group_name,
-          state,
+          with_expected.channel_group_name,
+          with_expected.state,
           testing_point,
           opps,
           bids,
           win_rate,
           sold,
-          binds_state_channel AS binds,
+          state_channel_binds.binds_state_channel AS binds,
           quotes,
           click_to_quote,
           channel_quote,
-          click_to_channel_quote,
-          q2b,
-          channel_binds,
-          channel_q2b,
+          SAFE_DIVIDE(channel_quote, NULLIF(total_bids_channel_state, 0)) AS click_to_channel_quote,
+          q2b_source.q2b,
+          channel_binds.channel_binds,
+          q2b_channel.channel_q2b,
           cpc,
           avg_bid,
           win_rate_uplift_state,
@@ -1174,77 +973,158 @@ export async function getPriceExplorationBQ(normalized) {
           roe,
           combined_ratio,
           CASE
-            WHEN testing_point = 0         THEN NULL
-            WHEN stat_sig = 'disqualified' THEN NULL
-            WHEN stat_sig = 'channel'      THEN win_rate_uplift_channel
-            ELSE                                win_rate_uplift_state   -- 'state'
+            WHEN testing_point = 0 THEN NULL
+            WHEN stat_sig = 'low' THEN win_rate_uplift_channel
+            ELSE win_rate_uplift_state
           END AS win_rate_uplift,
           CASE
-            WHEN testing_point = 0         THEN NULL
-            WHEN stat_sig = 'disqualified' THEN NULL
-            WHEN stat_sig = 'channel'      THEN cpc_uplift_channel
-            ELSE                                cpc_uplift_state        -- 'state'
+            WHEN testing_point = 0 THEN NULL
+            WHEN stat_sig = 'low' THEN cpc_uplift_channel
+            ELSE cpc_uplift_state
           END AS cpc_uplift,
-          -- Additional clicks: delta from baseline
           CASE
-            WHEN testing_point = 0         THEN 0
-            WHEN stat_sig = 'disqualified' THEN 0
-            ELSE (expected_clicks - COALESCE(baseline_expected_clicks, 0))
+            WHEN testing_point = 0 THEN 0
+            ELSE
+              (
+                (win_rate * total_bids_channel_state)
+                - (COALESCE(baseline_win_rate_channel_state, 0) * total_bids_channel_state)
+              )
           END AS additional_clicks,
-          -- Expected bind change: delta from baseline
-          CASE
-            WHEN testing_point = 0         THEN 0
-            WHEN stat_sig = 'disqualified' THEN 0
-            ELSE (expected_binds - COALESCE(baseline_expected_binds, 0))
-          END AS expected_bind_change,
-          -- Additional budget: delta from baseline projected cost (not actual spend)
-          CASE
-            WHEN testing_point = 0         THEN 0
-            WHEN stat_sig = 'disqualified' THEN 0
-            ELSE (expected_total_cost - COALESCE(baseline_expected_cost, 0))
-          END AS additional_budget_needed,
-          -- Current CPB (actual spend / actual binds)
+          (
+            CASE
+              WHEN testing_point = 0 THEN 0
+              ELSE
+                (
+                  (win_rate * total_bids_channel_state)
+                  - (COALESCE(baseline_win_rate_channel_state, 0) * total_bids_channel_state)
+                )
+            END
+          )
+          * (
+            CASE
+              WHEN COALESCE(quotes, 0) >= 10 AND SAFE_DIVIDE(quotes, NULLIF(sold, 0)) IS NOT NULL
+                THEN SAFE_DIVIDE(quotes, NULLIF(sold, 0))
+              WHEN SAFE_DIVIDE(state_quotes, NULLIF(state_sold, 0)) IS NOT NULL
+                THEN SAFE_DIVIDE(state_quotes, NULLIF(state_sold, 0))
+              ELSE SAFE_DIVIDE(channel_quote, NULLIF(total_bids_channel_state, 0))
+            END
+          )
+          * (
+            CASE
+              WHEN testing_point = 0 THEN 0
+              WHEN COALESCE(state_channel_binds.binds_state_channel, 0) >= 5 AND q2b_source.q2b IS NOT NULL
+                THEN q2b_source.q2b
+              ELSE COALESCE(q2b_channel.channel_q2b, 0)
+            END
+          ) AS expected_bind_change,
+          (expected_total_cost - current_spend_channel_state) AS additional_budget_needed,
           SAFE_DIVIDE(
             current_spend_channel_state,
-            NULLIF(binds_state_channel, 0)
+            NULLIF(state_channel_binds.binds_state_channel, 0)
           ) AS current_cpb,
-          -- Expected CPB: expected_cost / (actual_binds + additional_binds)
           SAFE_DIVIDE(
             expected_total_cost,
             NULLIF(
-              COALESCE(binds_state_channel, 0) +
-              CASE
-                WHEN testing_point = 0         THEN 0
-                WHEN stat_sig = 'disqualified' THEN 0
-                ELSE (expected_binds - COALESCE(baseline_expected_binds, 0))
-              END,
+              state_channel_binds.binds_state_channel
+              + (
+                (
+                  CASE
+                    WHEN testing_point = 0 THEN 0
+                    ELSE
+                      (
+                        (win_rate * total_bids_channel_state)
+                        - (COALESCE(baseline_win_rate_channel_state, 0) * total_bids_channel_state)
+                      )
+                  END
+                )
+                * (
+                  CASE
+                    WHEN COALESCE(quotes, 0) >= 10 AND SAFE_DIVIDE(quotes, NULLIF(sold, 0)) IS NOT NULL
+                      THEN SAFE_DIVIDE(quotes, NULLIF(sold, 0))
+                    WHEN SAFE_DIVIDE(state_quotes, NULLIF(state_sold, 0)) IS NOT NULL
+                      THEN SAFE_DIVIDE(state_quotes, NULLIF(state_sold, 0))
+                    ELSE SAFE_DIVIDE(channel_quote, NULLIF(total_bids_channel_state, 0))
+                  END
+                )
+                * (
+                  CASE
+                    WHEN testing_point = 0 THEN 0
+                    WHEN COALESCE(state_channel_binds.binds_state_channel, 0) >= 5 AND q2b_source.q2b IS NOT NULL
+                      THEN q2b_source.q2b
+                    ELSE COALESCE(q2b_channel.channel_q2b, 0)
+                  END
+                )
+              ),
               0
             )
           ) AS expected_cpb,
-          -- CPB uplift: (expected_cpb - baseline_expected_cpb) / baseline_expected_cpb
-          CASE
-            WHEN testing_point = 0         THEN NULL
-            WHEN stat_sig = 'disqualified' THEN NULL
-            ELSE SAFE_DIVIDE(
-              SAFE_DIVIDE(
-                expected_total_cost,
-                NULLIF(
-                  COALESCE(binds_state_channel, 0) +
-                  (expected_binds - COALESCE(baseline_expected_binds, 0)),
-                  0
-                )
-              ) - baseline_expected_cpb,
-              NULLIF(baseline_expected_cpb, 0)
+          SAFE_DIVIDE(
+            SAFE_DIVIDE(
+              expected_total_cost,
+              NULLIF(
+                state_channel_binds.binds_state_channel
+                + (
+                  (
+                    CASE
+                      WHEN testing_point = 0 THEN 0
+                      ELSE
+                        (
+                          (win_rate * total_bids_channel_state)
+                          - (COALESCE(baseline_win_rate_channel_state, 0) * total_bids_channel_state)
+                        )
+                    END
+                  )
+                  * (
+                    CASE
+                      WHEN COALESCE(quotes, 0) >= 10 AND SAFE_DIVIDE(quotes, NULLIF(sold, 0)) IS NOT NULL
+                        THEN SAFE_DIVIDE(quotes, NULLIF(sold, 0))
+                      WHEN SAFE_DIVIDE(state_quotes, NULLIF(state_sold, 0)) IS NOT NULL
+                        THEN SAFE_DIVIDE(state_quotes, NULLIF(state_sold, 0))
+                      ELSE SAFE_DIVIDE(channel_quote, NULLIF(total_bids_channel_state, 0))
+                    END
+                  )
+                  * (
+                    CASE
+                      WHEN testing_point = 0 THEN 0
+                      WHEN COALESCE(state_channel_binds.binds_state_channel, 0) >= 5 AND q2b_source.q2b IS NOT NULL
+                        THEN q2b_source.q2b
+                      ELSE COALESCE(q2b_channel.channel_q2b, 0)
+                    END
+                  )
+                ),
+                0
+              )
             )
-          END AS cpb_uplift,
+            - SAFE_DIVIDE(
+                current_spend_channel_state,
+                NULLIF(state_channel_binds.binds_state_channel, 0)
+              ),
+            NULLIF(
+              SAFE_DIVIDE(
+                current_spend_channel_state,
+                NULLIF(state_channel_binds.binds_state_channel, 0)
+              ),
+              0
+            )
+          ) AS cpb_uplift,
           stat_sig,
+          stat_sig_channel_group,
           CASE
-            WHEN testing_point = 0         THEN 'baseline'
-            WHEN stat_sig = 'disqualified' THEN 'disqualified'
-            WHEN stat_sig = 'channel'      THEN 'channel only'
-            ELSE                                'channel & state'
+            WHEN testing_point = 0 THEN 'baseline'
+            WHEN stat_sig = 'low' THEN 'channel only'
+            ELSE 'channel & state'
           END AS stat_sig_source
-        FROM with_expected_binds
+        FROM with_expected
+        LEFT JOIN q2b_source
+          ON q2b_source.state = with_expected.state
+         AND q2b_source.segment = REGEXP_EXTRACT(UPPER(with_expected.channel_group_name), r'(MCH|MCR|SCH|SCR)')
+        LEFT JOIN state_channel_binds
+          ON state_channel_binds.channel_group_name = with_expected.channel_group_name
+         AND state_channel_binds.state = with_expected.state
+        LEFT JOIN channel_binds
+          ON channel_binds.channel_group_name = with_expected.channel_group_name
+        LEFT JOIN q2b_channel
+          ON q2b_channel.segment = REGEXP_EXTRACT(UPPER(with_expected.channel_group_name), r'(MCH|MCR|SCH|SCR)')
       ),
       final_rows_scoped AS (
         SELECT
@@ -1268,20 +1148,11 @@ export async function getPriceExplorationBQ(normalized) {
         cpbExpr: "final_rows.expected_cpb",
         avgLifetimeCostExpr: "state_channel_financials.avg_lifetime_cost",
         avgLifetimePremiumExpr: "state_channel_financials.avg_lifetime_premium"
-    })} AS combined_ratio,
-          ssd_metrics.ssd_binds,
-          ssd_metrics.ssd_quotes,
-          ssd_metrics.ssd_q2b,
-          ssd_metrics.ssd_performance,
-          ssd_metrics.ssd_roe,
-          ssd_metrics.ssd_combined_ratio
+    })} AS combined_ratio
         FROM final_rows
         LEFT JOIN state_channel_financials
           ON state_channel_financials.channel_group_name = final_rows.channel_group_name
          AND state_channel_financials.state = final_rows.state
-        LEFT JOIN ssd_metrics
-          ON ssd_metrics.channel_group_name = final_rows.channel_group_name
-         AND ssd_metrics.state = final_rows.state
       ),
       ranked_rows AS (
         SELECT
@@ -1291,7 +1162,6 @@ export async function getPriceExplorationBQ(normalized) {
             ORDER BY
               CASE
                 WHEN testing_point != 0
-                  AND stat_sig != 'disqualified'
                   AND cpb_uplift IS NOT NULL
                   AND cpb_uplift <= 0.10
                   AND additional_clicks > 0
@@ -1301,7 +1171,6 @@ export async function getPriceExplorationBQ(normalized) {
               END,
               CASE
                 WHEN testing_point != 0
-                  AND stat_sig != 'disqualified'
                   AND cpb_uplift IS NOT NULL
                   AND cpb_uplift <= 0.10
                   AND additional_clicks > 0
@@ -1312,42 +1181,13 @@ export async function getPriceExplorationBQ(normalized) {
           ) AS recommended_testing_point
         FROM final_rows_scoped
       )
-      ${normalized.topPairs > 0 ? `
-      , pair_bind_scores AS (
-        SELECT state, channel_group_name,
-          MAX(CASE WHEN testing_point = recommended_testing_point
-              THEN COALESCE(expected_bind_change, 0) ELSE 0 END) as pair_bind_score
-        FROM ranked_rows
-        GROUP BY state, channel_group_name
-        ORDER BY pair_bind_score DESC
-        LIMIT ${normalized.topPairs}
-      )
-      SELECT r.*
-      FROM ranked_rows r
-      INNER JOIN pair_bind_scores p
-        ON r.state = p.state AND r.channel_group_name = p.channel_group_name
-      ORDER BY p.pair_bind_score DESC, r.state, r.channel_group_name, r.testing_point
-      LIMIT @limit
-      ` : `
       SELECT *
       FROM ranked_rows
       ORDER BY channel_group_name, state, testing_point
       LIMIT @limit
-      `}
-    `, normalized));
-}
-export async function getPriceExploration(filters) {
-    const normalized = normalizePriceExplorationFilters(filters);
-    // BQ data from cache (or PG if flag is on); strategy rules always read fresh from PG
-    const cachedRows = config.usePgAnalytics
-        ? await getPEBQviaPG(normalized)
-        : await getPriceExplorationBQ(normalized);
-    // Deep-copy so the cached array is never mutated (recommended_testing_point is set in-place)
-    const rows = cachedRows.map((row) => ({ ...row }));
-    const [strategyRules, manualOverrides] = await Promise.all([
-        getStrategyRulesForPlan(filters.planId, filters.activityLeadType),
-        getPriceDecisionOverridesForPlan(filters.planId, filters.activityLeadType)
-    ]);
+    `, normalized);
+    const strategyRules = await getStrategyRulesForPlan(filters.planId, filters.activityLeadType);
+    const manualOverrides = await getPriceDecisionOverridesForPlan(filters.planId, filters.activityLeadType);
     if (!strategyRules.length) {
         if (!manualOverrides.size) {
             return rows;
@@ -1415,115 +1255,99 @@ export async function getPriceExploration(filters) {
 }
 export async function listPlanMergedFilters(filters) {
     const normalized = normalizePlanMergedFilters(filters);
-    if (config.usePgAnalytics)
-        return listPlanMergedFiltersPG(normalized);
-    const cacheKey = buildCacheKey("pm-filters", {
-        startDate: normalized.startDate,
-        endDate: normalized.endDate,
-        activityType: normalized.activityType,
-        leadType: normalized.leadType
-    });
-    return cached(cacheKey, async () => {
-        const rows = await bqQuery(`
-        WITH scoped AS (
-          SELECT state, segment, channel_group_name, price_adjustment_percent, stat_sig
-          FROM ${bqAnalyticsRoutine("fn_plan_merged_agg")}(
-            IF(@startDate = "", DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY), DATE(@startDate)),
-            IF(@endDate = "", CURRENT_DATE(), DATE(@endDate))
-          )
-        )
-        SELECT
-          ARRAY(
-            SELECT DISTINCT state
-            FROM scoped
-            WHERE state IS NOT NULL
-            ORDER BY state
-          ) AS states,
-          ARRAY(
-            SELECT DISTINCT segment
-            FROM scoped
-            WHERE segment IS NOT NULL
-            ORDER BY segment
-          ) AS segments,
-          ARRAY(
-            SELECT DISTINCT channel_group_name
-            FROM scoped
-            WHERE channel_group_name IS NOT NULL
-            ORDER BY channel_group_name
-          ) AS channel_groups,
-          ARRAY(
-            SELECT DISTINCT price_adjustment_percent
-            FROM scoped
-            ORDER BY price_adjustment_percent
-          ) AS testing_points,
-          ARRAY(
-            SELECT DISTINCT stat_sig
-            FROM scoped
-            WHERE stat_sig IS NOT NULL
-            ORDER BY stat_sig
-          ) AS stat_sig
-      `, normalized);
-        const first = rows[0];
-        return {
-            states: withAllStateCodes(first?.states),
-            segments: unwrapBqArray(first?.segments),
-            channelGroups: unwrapBqArray(first?.channel_groups),
-            testingPoints: unwrapBqArray(first?.testing_points),
-            statSig: unwrapBqArray(first?.stat_sig)
-        };
-    });
-}
-export async function getPlanMergedAnalytics(filters) {
-    const normalized = normalizePlanMergedFilters(filters);
-    if (config.usePgAnalytics)
-        return getPlanMergedPG(normalized);
-    const cacheKey = buildCacheKey("pm", {
-        startDate: normalized.startDate,
-        endDate: normalized.endDate,
-        states: normalized.states,
-        segments: normalized.segments,
-        channelGroups: normalized.channelGroups,
-        testingPoints: normalized.testingPoints,
-        statSig: normalized.statSig,
-        activityType: normalized.activityType,
-        leadType: normalized.leadType
-    });
-    return cached(cacheKey, async () => {
-        const rows = await bqQuery(`
-        SELECT
-          start_date,
-          end_date,
-          channel_group_name,
-          state,
-          segment,
-          price_adjustment_percent,
-          stat_sig,
-          stat_sig_channel_group,
-          cpc_uplift,
-          win_rate_uplift,
-          additional_clicks,
-          expected_total_clicks,
-          expected_cpc,
-          expected_total_cost,
-          expected_total_binds,
-          additional_expected_binds,
-          expected_cpb,
-          ss_performance,
-          expected_performance,
-          performance_uplift
-        FROM ${bqAnalyticsRoutine("fn_plan_merged_agg")}(
+    const rows = await query(`
+      WITH scoped AS (
+        SELECT state, segment, channel_group_name, price_adjustment_percent, stat_sig
+        FROM ${analyticsRoutine("fn_plan_merged_agg")}(
           IF(@startDate = "", DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY), DATE(@startDate)),
           IF(@endDate = "", CURRENT_DATE(), DATE(@endDate))
         )
-        WHERE ("__ALL__" IN UNNEST(@states) OR state IN UNNEST(@states))
-          AND ("__ALL__" IN UNNEST(@segments) OR segment IN UNNEST(@segments))
-          AND ("__ALL__" IN UNNEST(@channelGroups) OR channel_group_name IN UNNEST(@channelGroups))
-          AND (999999999 IN UNNEST(@testingPoints) OR price_adjustment_percent IN UNNEST(@testingPoints))
-          AND ("__ALL__" IN UNNEST(@statSig) OR stat_sig IN UNNEST(@statSig))
-        ORDER BY channel_group_name, state, price_adjustment_percent
-      `, normalized);
-        return rows;
-    });
+        WHERE (
+            @activityType = ""
+            OR REGEXP_CONTAINS(LOWER(channel_group_name), @activityPattern)
+          )
+          AND (@leadType = "" OR REGEXP_CONTAINS(LOWER(channel_group_name), @leadPattern))
+      )
+      SELECT
+        ARRAY(
+          SELECT DISTINCT state
+          FROM scoped
+          WHERE state IS NOT NULL
+          ORDER BY state
+        ) AS states,
+        ARRAY(
+          SELECT DISTINCT segment
+          FROM scoped
+          WHERE segment IS NOT NULL
+          ORDER BY segment
+        ) AS segments,
+        ARRAY(
+          SELECT DISTINCT channel_group_name
+          FROM scoped
+          WHERE channel_group_name IS NOT NULL
+          ORDER BY channel_group_name
+        ) AS channel_groups,
+        ARRAY(
+          SELECT DISTINCT price_adjustment_percent
+          FROM scoped
+          ORDER BY price_adjustment_percent
+        ) AS testing_points,
+        ARRAY(
+          SELECT DISTINCT stat_sig
+          FROM scoped
+          WHERE stat_sig IS NOT NULL
+          ORDER BY stat_sig
+        ) AS stat_sig
+    `, normalized);
+    const first = rows[0];
+    return {
+        states: withAllStateCodes(first?.states),
+        segments: first?.segments ?? [],
+        channelGroups: first?.channel_groups ?? [],
+        testingPoints: first?.testing_points ?? [],
+        statSig: first?.stat_sig ?? []
+    };
+}
+export async function getPlanMergedAnalytics(filters) {
+    const normalized = normalizePlanMergedFilters(filters);
+    return query(`
+      SELECT
+        start_date,
+        end_date,
+        channel_group_name,
+        state,
+        segment,
+        price_adjustment_percent,
+        stat_sig,
+        stat_sig_channel_group,
+        cpc_uplift,
+        win_rate_uplift,
+        additional_clicks,
+        expected_total_clicks,
+        expected_cpc,
+        expected_total_cost,
+        expected_total_binds,
+        additional_expected_binds,
+        expected_cpb,
+        ss_performance,
+        expected_performance,
+        performance_uplift
+      FROM ${analyticsRoutine("fn_plan_merged_agg")}(
+        IF(@startDate = "", DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY), DATE(@startDate)),
+        IF(@endDate = "", CURRENT_DATE(), DATE(@endDate))
+      )
+      WHERE ("__ALL__" IN UNNEST(@states) OR state IN UNNEST(@states))
+        AND ("__ALL__" IN UNNEST(@segments) OR segment IN UNNEST(@segments))
+        AND ("__ALL__" IN UNNEST(@channelGroups) OR channel_group_name IN UNNEST(@channelGroups))
+        AND (999999999 IN UNNEST(@testingPoints) OR price_adjustment_percent IN UNNEST(@testingPoints))
+        AND ("__ALL__" IN UNNEST(@statSig) OR stat_sig IN UNNEST(@statSig))
+        AND (
+          @activityType = ""
+          OR REGEXP_CONTAINS(LOWER(channel_group_name), @activityPattern)
+        )
+        AND (@leadType = "" OR REGEXP_CONTAINS(LOWER(channel_group_name), @leadPattern))
+      ORDER BY channel_group_name, state, price_adjustment_percent
+    `, normalized);
 }
 export async function getStrategyAnalysis(filters) {
     const paramRows = await query(`
@@ -1539,60 +1363,84 @@ export async function getStrategyAnalysis(filters) {
     }
     const uniqueStates = [...new Set(rules.flatMap((rule) => rule.states))];
     const uniqueSegments = [...new Set(rules.flatMap((rule) => rule.segments))];
-    const qbc = Number.isFinite(Number(filters.qbc)) ? Number(filters.qbc) : 0;
-    const [rawBaselineRows, priceRows] = await Promise.all([
-        getStateSegmentPerformance({
-            startDate: filters.startDate,
-            endDate: filters.endDate,
-            states: uniqueStates,
-            segments: uniqueSegments,
-            activityLeadType: filters.activityLeadType,
-            qbc,
-            groupBy: "state_segment"
-        }),
-        getPriceExploration({
-            planId: filters.planId,
-            startDate: filters.startDate,
-            endDate: filters.endDate,
-            q2bStartDate: filters.startDate,
-            q2bEndDate: filters.endDate,
-            states: uniqueStates,
-            activityLeadType: filters.activityLeadType,
-            qbc,
-            limit: 200000
-        })
-    ]);
-    /* BQ already grouped by (state, segment) — map directly */
-    const baselineRows = rawBaselineRows.map((row) => ({
-        state: String(row.state || "").toUpperCase(),
-        segment: String(row.segment || "").toUpperCase(),
-        bids: Number(row.bids) || 0,
-        sold: Number(row.sold) || 0,
-        total_cost: Number(row.total_cost) || 0,
-        quotes: Number(row.quotes) || 0,
-        binds: Number(row.binds) || 0,
-        scored_policies: Number(row.scored_policies) || 0,
-        q2b: Number.isFinite(Number(row.q2b_score)) ? Number(row.q2b_score) : null,
-        performance: Number.isFinite(Number(row.performance)) ? Number(row.performance) : null,
-        roe: Number.isFinite(Number(row.roe)) ? Number(row.roe) : null,
-        combined_ratio: Number.isFinite(Number(row.combined_ratio)) ? Number(row.combined_ratio) : null,
-        /* raw _sum columns for correct re-aggregation across segments */
-        target_cpb_sum: Number(row.target_cpb_sum) || 0,
-        avg_profit_sum: Number(row.avg_profit_sum) || 0,
-        avg_equity_sum: Number(row.avg_equity_sum) || 0,
-        lifetime_cost_sum: Number(row.lifetime_cost_sum) || 0,
-        lifetime_premium_sum: Number(row.lifetime_premium_sum) || 0,
-    }));
+    const rawBaselineRows = await getStateSegmentPerformance({
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+        states: uniqueStates,
+        segments: uniqueSegments,
+        activityLeadType: filters.activityLeadType,
+        qbc: Number.isFinite(Number(filters.qbc)) ? Number(filters.qbc) : undefined
+    });
+    const baselineGrouped = new Map();
+    for (const row of rawBaselineRows) {
+        const state = String(row.state || "").toUpperCase();
+        const segment = String(row.segment || "").toUpperCase();
+        const key = `${state}|${segment}`;
+        const current = baselineGrouped.get(key) || {
+            state,
+            segment,
+            bids: 0,
+            sold: 0,
+            total_cost: 0,
+            quotes: 0,
+            binds: 0,
+            scored_policies: 0,
+            q2b: null,
+            performance: null,
+            roe: null,
+            combined_ratio: null
+        };
+        const bids = Number(row.bids) || 0;
+        const sold = Number(row.sold) || 0;
+        const totalCost = Number(row.total_cost) || 0;
+        const quotes = Number(row.quotes) || 0;
+        const binds = Number(row.binds) || 0;
+        const scoredPolicies = Number(row.scored_policies) || 0;
+        const perf = Number(row.performance);
+        const roe = Number(row.roe);
+        const cor = Number(row.combined_ratio);
+        current.bids = (Number(current.bids) || 0) + bids;
+        current.sold = (Number(current.sold) || 0) + sold;
+        current.total_cost = (Number(current.total_cost) || 0) + totalCost;
+        current.quotes = (Number(current.quotes) || 0) + quotes;
+        current.binds = (Number(current.binds) || 0) + binds;
+        current.scored_policies = (Number(current.scored_policies) || 0) + scoredPolicies;
+        const currentPerfWeighted = (Number(current.performance) || 0) * Math.max((Number(current.binds) || 0) - binds, 0);
+        const currentRoeWeighted = (Number(current.roe) || 0) * Math.max((Number(current.scored_policies) || 0) - scoredPolicies, 0);
+        const currentCorWeighted = (Number(current.combined_ratio) || 0) * Math.max((Number(current.scored_policies) || 0) - scoredPolicies, 0);
+        const nextPerfWeight = Number(current.binds) || 0;
+        const nextRoeWeight = Number(current.scored_policies) || 0;
+        const nextCorWeight = Number(current.scored_policies) || 0;
+        current.performance =
+            nextPerfWeight > 0
+                ? (currentPerfWeighted + (Number.isFinite(perf) ? perf * binds : 0)) / nextPerfWeight
+                : null;
+        current.roe =
+            nextRoeWeight > 0
+                ? (currentRoeWeighted + (Number.isFinite(roe) ? roe * scoredPolicies : 0)) / nextRoeWeight
+                : null;
+        current.combined_ratio =
+            nextCorWeight > 0
+                ? (currentCorWeighted + (Number.isFinite(cor) ? cor * scoredPolicies : 0)) / nextCorWeight
+                : null;
+        current.q2b = (Number(current.quotes) || 0) > 0 ? (Number(current.binds) || 0) / Number(current.quotes) : null;
+        baselineGrouped.set(key, current);
+    }
+    const baselineRows = [...baselineGrouped.values()];
+    const priceRows = await getPriceExploration({
+        planId: filters.planId,
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+        q2bStartDate: filters.startDate,
+        q2bEndDate: filters.endDate,
+        states: uniqueStates,
+        activityLeadType: filters.activityLeadType,
+        qbc: Number.isFinite(Number(filters.qbc)) ? Number(filters.qbc) : undefined,
+        limit: 200000
+    });
     function extractSegment(channelGroup) {
-        const upper = String(channelGroup || "").toUpperCase();
-        const match = upper.match(/\b(MCH|MCR|SCH|SCR)\b/);
-        if (match)
-            return match[1];
-        if (upper.includes("HOME"))
-            return "HOME";
-        if (upper.includes("RENT"))
-            return "RENT";
-        return "";
+        const match = String(channelGroup || "").toUpperCase().match(/\b(MCH|MCR|SCH|SCR)\b/);
+        return match ? match[1] : "";
     }
     const rowsByChannelStateSegment = new Map();
     for (const row of priceRows) {
@@ -1687,11 +1535,10 @@ export async function getStrategyAnalysis(filters) {
                 : Number(recommended.binds) || 0
         });
     }
-    const result = rules.map((rule) => {
+    return rules.map((rule) => {
         const stateSet = new Set(rule.states);
         const segmentSet = new Set(rule.segments);
-        const includesAllCoreSegments = (segmentSet.has("MCH") && segmentSet.has("MCR") && segmentSet.has("SCH") && segmentSet.has("SCR")) ||
-            (segmentSet.has("HOME") && segmentSet.has("RENT"));
+        const includesAllCoreSegments = segmentSet.has("MCH") && segmentSet.has("MCR") && segmentSet.has("SCH") && segmentSet.has("SCR");
         const matchingBaseline = baselineRows.filter((row) => stateSet.has(String(row.state || "").toUpperCase()) && segmentSet.has(String(row.segment || "").toUpperCase()));
         const matchingRecommended = recommendedSummaries.filter((row) => stateSet.has(String(row.state || "").toUpperCase()) &&
             (includesAllCoreSegments || segmentSet.has(String(row.segment || "").toUpperCase())));
@@ -1700,29 +1547,36 @@ export async function getStrategyAnalysis(filters) {
         const quotes = matchingBaseline.reduce((sum, row) => sum + (Number(row.quotes) || 0), 0);
         const binds = matchingBaseline.reduce((sum, row) => sum + (Number(row.binds) || 0), 0);
         const totalSpend = matchingBaseline.reduce((sum, row) => sum + (Number(row.total_cost) || 0), 0);
-        const scoredPolicies = matchingBaseline.reduce((sum, row) => sum + (Number(row.scored_policies) || 0), 0);
         const wr = bids > 0 ? sold / bids : null;
         const cpc = sold > 0 ? totalSpend / sold : null;
         const q2b = quotes > 0 ? binds / quotes : null;
-        /* Aggregate raw _sum columns, then compute ratios (same as BQ SQL) */
-        const targetCpbSum = matchingBaseline.reduce((sum, row) => sum + (Number(row.target_cpb_sum) || 0), 0);
-        const avgProfitSum = matchingBaseline.reduce((sum, row) => sum + (Number(row.avg_profit_sum) || 0), 0);
-        const avgEquitySum = matchingBaseline.reduce((sum, row) => sum + (Number(row.avg_equity_sum) || 0), 0);
-        const lifetimeCostSum = matchingBaseline.reduce((sum, row) => sum + (Number(row.lifetime_cost_sum) || 0), 0);
-        const lifetimePremiumSum = matchingBaseline.reduce((sum, row) => sum + (Number(row.lifetime_premium_sum) || 0), 0);
-        const ruleCpb = binds > 0 ? totalSpend / binds : 0;
-        const ruleTargetCpb = binds > 0 ? targetCpbSum / binds : 0;
-        const ruleAvgProfit = scoredPolicies > 0 ? avgProfitSum / scoredPolicies : 0;
-        const ruleAvgEquity = scoredPolicies > 0 ? avgEquitySum / scoredPolicies : 0;
-        const ruleAvgLifetimeCost = scoredPolicies > 0 ? lifetimeCostSum / scoredPolicies : 0;
-        const ruleAvgLifetimePremium = scoredPolicies > 0 ? lifetimePremiumSum / scoredPolicies : 0;
-        const rulePerformance = ruleCpb > 0 ? ruleTargetCpb / ruleCpb : null;
-        const ruleRoe = scoredPolicies > 0 && ruleAvgEquity !== 0
-            ? (ruleAvgProfit - 0.8 * (ruleCpb / 0.81 + qbc)) / ruleAvgEquity
-            : null;
-        const ruleCor = scoredPolicies > 0 && ruleAvgLifetimePremium !== 0
-            ? (ruleCpb / 0.81 + qbc + ruleAvgLifetimeCost) / ruleAvgLifetimePremium
-            : null;
+        const performanceWeighted = matchingBaseline.reduce((acc, row) => {
+            const weight = Number(row.binds) || 0;
+            const value = Number(row.performance);
+            if (weight > 0 && Number.isFinite(value)) {
+                acc.total += value * weight;
+                acc.weight += weight;
+            }
+            return acc;
+        }, { total: 0, weight: 0 });
+        const roeWeighted = matchingBaseline.reduce((acc, row) => {
+            const weight = Number(row.scored_policies) || 0;
+            const value = Number(row.roe);
+            if (weight > 0 && Number.isFinite(value)) {
+                acc.total += value * weight;
+                acc.weight += weight;
+            }
+            return acc;
+        }, { total: 0, weight: 0 });
+        const corWeighted = matchingBaseline.reduce((acc, row) => {
+            const weight = Number(row.scored_policies) || 0;
+            const value = Number(row.combined_ratio);
+            if (weight > 0 && Number.isFinite(value)) {
+                acc.total += value * weight;
+                acc.weight += weight;
+            }
+            return acc;
+        }, { total: 0, weight: 0 });
         const additionalClicks = matchingRecommended.reduce((sum, row) => sum + (Number(row.additional_clicks) || 0), 0);
         const additionalBinds = matchingRecommended.reduce((sum, row) => sum + (Number(row.additional_binds) || 0), 0);
         const additionalBudget = matchingRecommended.reduce((sum, row) => sum + (Number(row.additional_budget) || 0), 0);
@@ -1778,29 +1632,18 @@ export async function getStrategyAnalysis(filters) {
             current_cpb: currentCpb,
             expected_cpb: expectedCpb,
             q2b,
-            performance: rulePerformance,
-            roe: ruleRoe,
-            cor: ruleCor,
+            performance: performanceWeighted.weight > 0 ? performanceWeighted.total / performanceWeighted.weight : null,
+            roe: roeWeighted.weight > 0 ? roeWeighted.total / roeWeighted.weight : null,
+            cor: corWeighted.weight > 0 ? corWeighted.total / corWeighted.weight : null,
             additional_clicks: additionalClicks,
             additional_binds: additionalBinds,
             wr_uplift,
             cpc_uplift,
             cpb_uplift,
             expected_total_cost: expectedTotalCost,
-            additional_budget: additionalBudget,
-            _scored_policies: scoredPolicies,
-            _lifetime_cost_sum: lifetimeCostSum,
-            _lifetime_premium_sum: lifetimePremiumSum,
-            _target_cpb_sum: targetCpbSum,
-            _avg_profit_sum: avgProfitSum,
-            _avg_equity_sum: avgEquitySum,
-            _wr_rollup_current: wrRollup.currentWins,
-            _wr_rollup_expected: wrRollup.expectedWins,
-            _cpb_rollup_current: cpbRollup.currentCost,
-            _cpb_rollup_expected: cpbRollup.expectedCost,
+            additional_budget: additionalBudget
         };
     });
-    return result;
 }
 function mapGrowthStrategy(growthStrategy) {
     const value = String(growthStrategy || "").trim().toLowerCase();
@@ -1812,42 +1655,51 @@ function mapGrowthStrategy(growthStrategy) {
     }
     return { key: "robustic", label: "Robustic growth" };
 }
-function aggregateStrategySlice(baselineRows, recommendedRows, qbc = 0) {
+function aggregateStrategySlice(baselineRows, recommendedRows) {
     const bids = baselineRows.reduce((sum, row) => sum + (Number(row.bids) || 0), 0);
     const sold = baselineRows.reduce((sum, row) => sum + (Number(row.sold) || 0), 0);
     const quotes = baselineRows.reduce((sum, row) => sum + (Number(row.quotes) || 0), 0);
     const binds = baselineRows.reduce((sum, row) => sum + (Number(row.binds) || 0), 0);
     const totalSpend = baselineRows.reduce((sum, row) => sum + (Number(row.total_cost) || 0), 0);
-    const scoredPolicies = baselineRows.reduce((sum, row) => sum + (Number(row.scored_policies) || 0), 0);
     const wr = bids > 0 ? sold / bids : null;
     const cpc = sold > 0 ? totalSpend / sold : null;
     const q2b = quotes > 0 ? binds / quotes : null;
-    /* Aggregate raw _sum columns, then compute ratios from sums
-       (same formulas as the BQ SQL — ratio of aggregated sums, NOT weighted avg of ratios) */
-    const targetCpbSum = baselineRows.reduce((sum, row) => sum + (Number(row.target_cpb_sum) || 0), 0);
-    const avgProfitSum = baselineRows.reduce((sum, row) => sum + (Number(row.avg_profit_sum) || 0), 0);
-    const avgEquitySum = baselineRows.reduce((sum, row) => sum + (Number(row.avg_equity_sum) || 0), 0);
-    const lifetimeCostSum = baselineRows.reduce((sum, row) => sum + (Number(row.lifetime_cost_sum) || 0), 0);
-    const lifetimePremiumSum = baselineRows.reduce((sum, row) => sum + (Number(row.lifetime_premium_sum) || 0), 0);
-    const avgMrltvSum = baselineRows.reduce((sum, row) => sum + (Number(row.avg_mrltv_sum) || 0), 0);
-    const cpb = binds > 0 ? totalSpend / binds : 0;
-    const targetCpb = binds > 0 ? targetCpbSum / binds : 0;
-    const avgProfit = scoredPolicies > 0 ? avgProfitSum / scoredPolicies : 0;
-    const avgEquity = scoredPolicies > 0 ? avgEquitySum / scoredPolicies : 0;
-    const avgLifetimeCost = scoredPolicies > 0 ? lifetimeCostSum / scoredPolicies : 0;
-    const avgLifetimePremium = scoredPolicies > 0 ? lifetimePremiumSum / scoredPolicies : 0;
-    /* Performance = target_cpb / cpb (same as BQ) */
-    const performance = cpb > 0 ? targetCpb / cpb : null;
-    /* ROE = (avg_profit - 0.8*(cpb/0.81 + qbc)) / avg_equity (same as BQ buildRoeSql) */
-    const roe = scoredPolicies > 0 && avgEquity !== 0
-        ? (avgProfit - 0.8 * (cpb / 0.81 + qbc)) / avgEquity
-        : null;
-    /* COR = (cpb/0.81 + qbc + avg_lifetime_cost) / avg_lifetime_premium (same as BQ buildCombinedRatioSql) */
-    const cor = scoredPolicies > 0 && avgLifetimePremium !== 0
-        ? (cpb / 0.81 + qbc + avgLifetimeCost) / avgLifetimePremium
-        : null;
-    /* LTV = avg_mrltv */
-    const ltv = scoredPolicies > 0 ? avgMrltvSum / scoredPolicies : null;
+    const performanceWeighted = baselineRows.reduce((acc, row) => {
+        const value = Number(row.performance);
+        const weight = Number(row.binds) || 0;
+        if (weight > 0 && Number.isFinite(value)) {
+            acc.total += value * weight;
+            acc.weight += weight;
+        }
+        return acc;
+    }, { total: 0, weight: 0 });
+    const roeWeighted = baselineRows.reduce((acc, row) => {
+        const value = Number(row.roe);
+        const weight = Number(row.scored_policies) || 0;
+        if (weight > 0 && Number.isFinite(value)) {
+            acc.total += value * weight;
+            acc.weight += weight;
+        }
+        return acc;
+    }, { total: 0, weight: 0 });
+    const corWeighted = baselineRows.reduce((acc, row) => {
+        const value = Number(row.combined_ratio);
+        const weight = Number(row.scored_policies) || 0;
+        if (weight > 0 && Number.isFinite(value)) {
+            acc.total += value * weight;
+            acc.weight += weight;
+        }
+        return acc;
+    }, { total: 0, weight: 0 });
+    const ltvWeighted = baselineRows.reduce((acc, row) => {
+        const value = Number(row.mrltv);
+        const weight = Number(row.scored_policies) || 0;
+        if (weight > 0 && Number.isFinite(value)) {
+            acc.total += value * weight;
+            acc.weight += weight;
+        }
+        return acc;
+    }, { total: 0, weight: 0 });
     const additionalClicks = recommendedRows.reduce((sum, row) => sum + (Number(row.additional_clicks) || 0), 0);
     const additionalBinds = recommendedRows.reduce((sum, row) => sum + (Number(row.additional_binds) || 0), 0);
     const additionalBudget = recommendedRows.reduce((sum, row) => sum + (Number(row.additional_budget) || 0), 0);
@@ -1896,9 +1748,9 @@ function aggregateStrategySlice(baselineRows, recommendedRows, qbc = 0) {
         current_cpb: currentCpb,
         expected_cpb: expectedCpb,
         q2b,
-        performance,
-        roe,
-        cor,
+        performance: performanceWeighted.weight > 0 ? performanceWeighted.total / performanceWeighted.weight : null,
+        roe: roeWeighted.weight > 0 ? roeWeighted.total / roeWeighted.weight : null,
+        cor: corWeighted.weight > 0 ? corWeighted.total / corWeighted.weight : null,
         additional_clicks: additionalClicks,
         additional_binds: additionalBinds,
         wr_uplift: wrUplift,
@@ -1906,17 +1758,7 @@ function aggregateStrategySlice(baselineRows, recommendedRows, qbc = 0) {
         cpb_uplift: cpbUplift,
         expected_total_cost: expectedTotalCost,
         additional_budget: additionalBudget,
-        _scored_policies: scoredPolicies,
-        _lifetime_cost_sum: lifetimeCostSum,
-        _lifetime_premium_sum: lifetimePremiumSum,
-        _target_cpb_sum: targetCpbSum,
-        _avg_profit_sum: avgProfitSum,
-        _avg_equity_sum: avgEquitySum,
-        _wr_rollup_current: wrRollup.currentWins,
-        _wr_rollup_expected: wrRollup.expectedWins,
-        _cpb_rollup_current: cpbRollup.currentCost,
-        _cpb_rollup_expected: cpbRollup.expectedCost,
-        ltv
+        ltv: ltvWeighted.weight > 0 ? ltvWeighted.total / ltvWeighted.weight : null
     };
 }
 export async function getStateAnalysis(filters) {
@@ -1959,50 +1801,85 @@ export async function getStateAnalysis(filters) {
     }
     const uniqueStates = [...new Set(rules.flatMap((rule) => rule.states))];
     const uniqueSegments = [...new Set(rules.flatMap((rule) => rule.segments))];
-    const qbc = Number.isFinite(Number(filters.qbc)) ? Number(filters.qbc) : 0;
-    const [rawBaselineRows, priceRows] = await Promise.all([
-        getStateSegmentPerformance({
-            startDate: filters.startDate,
-            endDate: filters.endDate,
-            states: uniqueStates,
-            segments: uniqueSegments,
-            activityLeadType: filters.activityLeadType,
-            qbc,
-            groupBy: "state_segment"
-        }),
-        getPriceExploration({
-            planId: filters.planId,
-            startDate: filters.startDate,
-            endDate: filters.endDate,
-            q2bStartDate: filters.startDate,
-            q2bEndDate: filters.endDate,
-            states: uniqueStates,
-            activityLeadType: filters.activityLeadType,
-            qbc,
-            limit: 200000
-        })
-    ]);
-    /* BQ already grouped by (state, segment) — map directly, no channel re-grouping needed */
-    const baselineRows = rawBaselineRows.map((row) => ({
-        state: String(row.state || "").toUpperCase(),
-        segment: String(row.segment || "").toUpperCase(),
-        bids: Number(row.bids) || 0,
-        sold: Number(row.sold) || 0,
-        total_cost: Number(row.total_cost) || 0,
-        quotes: Number(row.quotes) || 0,
-        binds: Number(row.binds) || 0,
-        scored_policies: Number(row.scored_policies) || 0,
-        performance: Number.isFinite(Number(row.performance)) ? Number(row.performance) : null,
-        roe: Number.isFinite(Number(row.roe)) ? Number(row.roe) : null,
-        combined_ratio: Number.isFinite(Number(row.combined_ratio)) ? Number(row.combined_ratio) : null,
-        mrltv: Number.isFinite(Number(row.mrltv)) ? Number(row.mrltv) : null,
-        target_cpb_sum: Number(row.target_cpb_sum) || 0,
-        avg_profit_sum: Number(row.avg_profit_sum) || 0,
-        avg_equity_sum: Number(row.avg_equity_sum) || 0,
-        lifetime_cost_sum: Number(row.lifetime_cost_sum) || 0,
-        lifetime_premium_sum: Number(row.lifetime_premium_sum) || 0,
-        avg_mrltv_sum: Number(row.avg_mrltv_sum) || 0
-    }));
+    const rawBaselineRows = await getStateSegmentPerformance({
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+        states: uniqueStates,
+        segments: uniqueSegments,
+        activityLeadType: filters.activityLeadType,
+        qbc: Number.isFinite(Number(filters.qbc)) ? Number(filters.qbc) : undefined
+    });
+    const baselineGrouped = new Map();
+    for (const row of rawBaselineRows) {
+        const state = String(row.state || "").toUpperCase();
+        const segment = String(row.segment || "").toUpperCase();
+        const key = `${state}|${segment}`;
+        const current = baselineGrouped.get(key) || {
+            state,
+            segment,
+            bids: 0,
+            sold: 0,
+            total_cost: 0,
+            quotes: 0,
+            binds: 0,
+            scored_policies: 0,
+            performance: null,
+            roe: null,
+            combined_ratio: null,
+            mrltv: null
+        };
+        const bids = Number(row.bids) || 0;
+        const sold = Number(row.sold) || 0;
+        const totalCost = Number(row.total_cost) || 0;
+        const quotes = Number(row.quotes) || 0;
+        const binds = Number(row.binds) || 0;
+        const scoredPolicies = Number(row.scored_policies) || 0;
+        const perf = Number(row.performance);
+        const roe = Number(row.roe);
+        const cor = Number(row.combined_ratio);
+        const ltv = Number(row.mrltv);
+        const prevBinds = Number(current.binds) || 0;
+        const prevScored = Number(current.scored_policies) || 0;
+        const prevPerfWeighted = (Number(current.performance) || 0) * prevBinds;
+        const prevRoeWeighted = (Number(current.roe) || 0) * prevScored;
+        const prevCorWeighted = (Number(current.combined_ratio) || 0) * prevScored;
+        const prevLtvWeighted = (Number(current.mrltv) || 0) * prevScored;
+        current.bids = (Number(current.bids) || 0) + bids;
+        current.sold = (Number(current.sold) || 0) + sold;
+        current.total_cost = (Number(current.total_cost) || 0) + totalCost;
+        current.quotes = (Number(current.quotes) || 0) + quotes;
+        current.binds = prevBinds + binds;
+        current.scored_policies = prevScored + scoredPolicies;
+        current.performance =
+            current.binds > 0
+                ? (prevPerfWeighted + (Number.isFinite(perf) ? perf * binds : 0)) / current.binds
+                : null;
+        current.roe =
+            current.scored_policies > 0
+                ? (prevRoeWeighted + (Number.isFinite(roe) ? roe * scoredPolicies : 0)) / current.scored_policies
+                : null;
+        current.combined_ratio =
+            current.scored_policies > 0
+                ? (prevCorWeighted + (Number.isFinite(cor) ? cor * scoredPolicies : 0)) / current.scored_policies
+                : null;
+        current.mrltv =
+            current.scored_policies > 0
+                ? (prevLtvWeighted + (Number.isFinite(ltv) ? ltv * scoredPolicies : 0)) / current.scored_policies
+                : null;
+        baselineGrouped.set(key, current);
+    }
+    const baselineRows = [...baselineGrouped.values()];
+    const priceRows = await getPriceExploration({
+        planId: filters.planId,
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+        q2bStartDate: filters.startDate,
+        q2bEndDate: filters.endDate,
+        states: uniqueStates,
+        activityLeadType: filters.activityLeadType,
+        qbc: Number.isFinite(Number(filters.qbc)) ? Number(filters.qbc) : undefined,
+        limit: 200000
+    });
     const rowsByChannelStateSegment = new Map();
     for (const row of priceRows) {
         const state = String(row.state || "").toUpperCase();
@@ -2054,20 +1931,19 @@ export async function getStateAnalysis(filters) {
             cpb_weight: Number.isFinite(baselineBinds) && baselineBinds > 0 ? baselineBinds : Number(recommended.binds) || 0
         });
     }
-    const overallAgg = aggregateStrategySlice(baselineRows, recommendedSummaries, qbc);
+    const overallAgg = aggregateStrategySlice(baselineRows, recommendedSummaries);
     const ruleRows = rules.map((rule) => {
         const stateSet = new Set(rule.states);
         const segmentSet = new Set(rule.segments);
-        const includesAllCoreSegments = (segmentSet.has("MCH") && segmentSet.has("MCR") && segmentSet.has("SCH") && segmentSet.has("SCR")) ||
-            (segmentSet.has("HOME") && segmentSet.has("RENT"));
+        const includesAllCoreSegments = segmentSet.has("MCH") && segmentSet.has("MCR") && segmentSet.has("SCH") && segmentSet.has("SCR");
         const strategy = mapGrowthStrategy(rule.growthStrategy);
         const baselineSlice = baselineRows.filter((row) => stateSet.has(row.state) && segmentSet.has(row.segment));
         const recommendedSlice = recommendedSummaries.filter((row) => stateSet.has(row.state) && (includesAllCoreSegments || segmentSet.has(row.segment)));
-        const ruleAgg = aggregateStrategySlice(baselineSlice, recommendedSlice, qbc);
+        const ruleAgg = aggregateStrategySlice(baselineSlice, recommendedSlice);
         const segmentRows = rule.segments.map((segment) => {
             const baselineSegment = baselineRows.filter((row) => stateSet.has(row.state) && row.segment === segment);
             const recommendedSegment = recommendedSummaries.filter((row) => stateSet.has(row.state) && row.segment === segment);
-            const agg = aggregateStrategySlice(baselineSegment, recommendedSegment, qbc);
+            const agg = aggregateStrategySlice(baselineSegment, recommendedSegment);
             return {
                 segment,
                 bids: agg.bids,
@@ -2108,7 +1984,7 @@ export async function getStateAnalysis(filters) {
         const segmentSet = primaryRule ? new Set(primaryRule.segments) : null;
         const baselineSlice = baselineRows.filter((row) => row.state === stateCode && (!segmentSet || segmentSet.has(row.segment)));
         const recommendedSlice = recommendedSummaries.filter((row) => row.state === stateCode && (!segmentSet || segmentSet.has(row.segment)));
-        const agg = aggregateStrategySlice(baselineSlice, recommendedSlice, qbc);
+        const agg = aggregateStrategySlice(baselineSlice, recommendedSlice);
         return {
             state: stateCode,
             rule_name: primaryRule?.rule_name || null,
@@ -2133,13 +2009,13 @@ export async function getStateAnalysis(filters) {
             : null;
         const baselineSlice = baselineRows.filter((row) => row.state === stateRow.state && (!segmentSet || segmentSet.has(String(row.segment || "").toUpperCase())));
         const recommendedSlice = recommendedSummaries.filter((row) => row.state === stateRow.state && (!segmentSet || segmentSet.has(String(row.segment || "").toUpperCase())));
-        const agg = aggregateStrategySlice(baselineSlice, recommendedSlice, qbc);
+        const agg = aggregateStrategySlice(baselineSlice, recommendedSlice);
         const segments = segmentSet ? [...segmentSet] : [...new Set(baselineSlice.map((row) => String(row.segment || "").toUpperCase()))];
         segments.sort();
         const segmentRows = segments.map((segment) => {
             const baselineSegment = baselineSlice.filter((row) => String(row.segment || "").toUpperCase() === segment);
             const recommendedSegment = recommendedSlice.filter((row) => String(row.segment || "").toUpperCase() === segment);
-            const segmentAgg = aggregateStrategySlice(baselineSegment, recommendedSegment, qbc);
+            const segmentAgg = aggregateStrategySlice(baselineSegment, recommendedSegment);
             return {
                 segment,
                 bids: segmentAgg.bids,
@@ -2171,7 +2047,7 @@ export async function getStateAnalysis(filters) {
             segment_rows: segmentRows
         };
     });
-    const result = {
+    return {
         overall: {
             ...overallAgg,
             rule_name: "All rules",
@@ -2182,122 +2058,4 @@ export async function getStateAnalysis(filters) {
         state_details: stateDetails,
         rules: ruleRows
     };
-    return result;
-}
-// ── Plans Comparison ──────────────────────────────────────────────────
-// Returns one row per plan (plans mode) or one row per activity/lead type (activity mode).
-// Each row is the "overall" KPI from getStateAnalysis.
-const ACTIVITY_LEAD_TYPES = [
-    "clicks_auto", "clicks_home", "leads_auto", "leads_home", "calls_auto", "calls_home"
-];
-const ACTIVITY_LEAD_LABELS = {
-    clicks_auto: "Clicks / Auto",
-    clicks_home: "Clicks / Home",
-    leads_auto: "Leads / Auto",
-    leads_home: "Leads / Home",
-    calls_auto: "Calls / Auto",
-    calls_home: "Calls / Home",
-};
-export async function getPlansComparison(opts) {
-    const { mode, plans } = opts;
-    if (mode === "plans") {
-        // One row per plan — use each plan's own dates/activity/qbc
-        const results = await Promise.all(plans
-            .filter((p) => p.status !== "archived")
-            .map(async (plan) => {
-            let ctx = {};
-            try {
-                ctx = plan.plan_context_json ? JSON.parse(plan.plan_context_json) : {};
-            }
-            catch { /* ignore */ }
-            const startDate = opts.startDate || String(ctx.perfStartDate || ctx.performanceStartDate || "");
-            const endDate = opts.endDate || String(ctx.perfEndDate || ctx.performanceEndDate || "");
-            const activity = String(ctx.activity || "clicks");
-            const leadType = String(ctx.leadType || "auto");
-            const activityLeadType = ctx.activityLeadType ? String(ctx.activityLeadType) : `${activity}_${leadType}`;
-            const qbc = Number(ctx.qbcClicks) || 0;
-            if (!startDate || !endDate || !qbc) {
-                return { label: plan.plan_name, plan_id: plan.plan_id, empty: true };
-            }
-            try {
-                const sa = await getStateAnalysis({ planId: plan.plan_id, startDate, endDate, activityLeadType, qbc });
-                return {
-                    label: plan.plan_name,
-                    plan_id: plan.plan_id,
-                    target_cor: sa.overall.target_cor,
-                    bids: sa.overall.bids,
-                    sold: sa.overall.sold,
-                    total_spend: sa.overall.total_spend,
-                    cpc: sa.overall.cpc,
-                    wr: sa.overall.wr,
-                    binds: sa.overall.binds,
-                    current_cpb: sa.overall.current_cpb,
-                    expected_cpb: sa.overall.expected_cpb,
-                    q2b: sa.overall.q2b,
-                    performance: sa.overall.performance,
-                    roe: sa.overall.roe,
-                    cor: sa.overall.cor,
-                    additional_clicks: sa.overall.additional_clicks,
-                    additional_binds: sa.overall.additional_binds,
-                    wr_uplift: sa.overall.wr_uplift,
-                    cpc_uplift: sa.overall.cpc_uplift,
-                    cpb_uplift: sa.overall.cpb_uplift,
-                    expected_total_cost: sa.overall.expected_total_cost,
-                    additional_budget: sa.overall.additional_budget,
-                };
-            }
-            catch {
-                return { label: plan.plan_name, plan_id: plan.plan_id, empty: true };
-            }
-        }));
-        return results.filter((r) => !r.empty);
-    }
-    // Activity mode — one row per activity/lead type for a single plan
-    const planId = opts.planId;
-    if (!planId)
-        return [];
-    const plan = plans.find((p) => p.plan_id === planId);
-    let ctx = {};
-    try {
-        ctx = plan?.plan_context_json ? JSON.parse(plan.plan_context_json) : {};
-    }
-    catch { /* ignore */ }
-    const startDate = opts.startDate || String(ctx.perfStartDate || ctx.performanceStartDate || "");
-    const endDate = opts.endDate || String(ctx.perfEndDate || ctx.performanceEndDate || "");
-    const qbc = Number(ctx.qbcClicks) || 0;
-    if (!startDate || !endDate || !qbc)
-        return [];
-    const results = await Promise.all(ACTIVITY_LEAD_TYPES.map(async (alt) => {
-        try {
-            const sa = await getStateAnalysis({ planId, startDate, endDate, activityLeadType: alt, qbc });
-            return {
-                label: ACTIVITY_LEAD_LABELS[alt],
-                activity_lead_type: alt,
-                target_cor: sa.overall.target_cor,
-                bids: sa.overall.bids,
-                sold: sa.overall.sold,
-                total_spend: sa.overall.total_spend,
-                cpc: sa.overall.cpc,
-                wr: sa.overall.wr,
-                binds: sa.overall.binds,
-                current_cpb: sa.overall.current_cpb,
-                expected_cpb: sa.overall.expected_cpb,
-                q2b: sa.overall.q2b,
-                performance: sa.overall.performance,
-                roe: sa.overall.roe,
-                cor: sa.overall.cor,
-                additional_clicks: sa.overall.additional_clicks,
-                additional_binds: sa.overall.additional_binds,
-                wr_uplift: sa.overall.wr_uplift,
-                cpc_uplift: sa.overall.cpc_uplift,
-                cpb_uplift: sa.overall.cpb_uplift,
-                expected_total_cost: sa.overall.expected_total_cost,
-                additional_budget: sa.overall.additional_budget,
-            };
-        }
-        catch {
-            return null;
-        }
-    }));
-    return results.filter(Boolean);
 }

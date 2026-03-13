@@ -7,24 +7,13 @@ const changeLogCreateSchema = z.object({
     action: z.string().min(1),
     before: z.unknown().optional(),
     after: z.unknown().optional(),
-    metadata: z.unknown().optional(),
-    module: z.string().optional()
+    metadata: z.unknown().optional()
 });
 export const changeLogRoutes = Router();
 changeLogRoutes.get("/change-log", async (req, res, next) => {
     try {
         const rawLimit = typeof req.query.limit === "string" ? Number(req.query.limit.trim()) : 200;
-        const objectType = typeof req.query.objectType === "string" ? req.query.objectType.trim() : undefined;
-        const objectId = typeof req.query.objectId === "string" ? req.query.objectId.trim() : undefined;
-        const userId = typeof req.query.userId === "string" ? req.query.userId.trim() : undefined;
-        const module = typeof req.query.module === "string" ? req.query.module.trim() : undefined;
-        const rows = await listChangeLogs({
-            limit: Number.isFinite(rawLimit) ? rawLimit : 200,
-            objectType: objectType || undefined,
-            objectId: objectId || undefined,
-            userId: userId || undefined,
-            module: module || undefined,
-        });
+        const rows = await listChangeLogs(Number.isFinite(rawLimit) ? rawLimit : 200);
         res.json({ rows });
     }
     catch (error) {
@@ -43,8 +32,7 @@ changeLogRoutes.post("/change-log", async (req, res, next) => {
             action: parsed.action,
             before: parsed.before,
             after: parsed.after,
-            metadata: parsed.metadata,
-            module: parsed.module
+            metadata: parsed.metadata
         });
         res.status(201).json(result);
     }

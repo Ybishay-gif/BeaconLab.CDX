@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { query, table } from "../db/index.js";
+import { query, table } from "../db/bigquery.js";
 import { config } from "../config.js";
 import { splitCombinedFilter } from "./shared/activityScope.js";
 import { buildCombinedRatioSql, buildRoeSql } from "./shared/kpiSql.js";
-import { getStrategyRulesForPlan } from "./analyticsService.js";
 const RAW_CROSS_TACTIC_TABLE = config.rawCrossTacticTable;
+const TARGETS_PERF_DAILY_TABLE = table("targets_perf_daily");
 let targetsTableReady = null;
 let targetsPerfDailyReady = null;
 let targetsPerfDailyCheckedAt = 0;
@@ -23,9 +23,6 @@ function normalizeFilters(filters) {
     };
 }
 async function hasTargetsPerfDailyTable() {
-    // PG always has the table (created via migration)
-    if (config.usePg)
-        return true;
     const now = Date.now();
     if (!targetsPerfDailyReady || now - targetsPerfDailyCheckedAt > TARGETS_PERF_DAILY_CHECK_TTL_MS) {
         targetsPerfDailyCheckedAt = now;
@@ -41,9 +38,6 @@ async function hasTargetsPerfDailyTable() {
     return targetsPerfDailyReady;
 }
 async function hasTargetsPlanIdColumn() {
-    // PG schema always has plan_id column
-    if (config.usePg)
-        return true;
     const now = Date.now();
     if (!targetsPlanIdColumnReady || now - targetsPlanIdCheckedAt > TARGETS_PLAN_ID_CHECK_TTL_MS) {
         targetsPlanIdCheckedAt = now;
@@ -58,27 +52,6 @@ async function hasTargetsPlanIdColumn() {
             .catch(() => false);
     }
     return targetsPlanIdColumnReady;
-}
-let targetsAltColumnReady = null;
-let targetsAltCheckedAt = 0;
-const TARGETS_ALT_CHECK_TTL_MS = 5 * 60 * 1000;
-async function hasTargetsActivityLeadTypeColumn() {
-    if (config.usePg)
-        return true;
-    const now = Date.now();
-    if (!targetsAltColumnReady || now - targetsAltCheckedAt > TARGETS_ALT_CHECK_TTL_MS) {
-        targetsAltCheckedAt = now;
-        targetsAltColumnReady = query(`
-        SELECT 1 AS present
-        FROM \`${config.projectId}.${config.dataset}.INFORMATION_SCHEMA.COLUMNS\`
-        WHERE table_name = 'targets'
-          AND column_name = 'activity_lead_type'
-        LIMIT 1
-      `)
-            .then((rows) => rows.length > 0)
-            .catch(() => false);
-    }
-    return targetsAltColumnReady;
 }
 function normalizeState(value) {
     return value.trim().toUpperCase();
@@ -194,23 +167,12 @@ function getPerfScopedCteFromRaw() {
         FROM perf_base
         WHERE (@startDate = "" OR event_date >= DATE(@startDate))
           AND (@endDate = "" OR event_date <= DATE(@endDate))
-          AND segment IN ('MCH', 'MCR', 'SCH', 'SCR', 'HOME', 'RENT')
+          AND segment IN ('MCH', 'MCR', 'SCH', 'SCR')
         GROUP BY state, segment, source_key
       )
   `;
 }
 function getPerfScopedCteFromDaily() {
-    const tbl = table("targets_perf_daily");
-    // PG regex: regexp_replace needs 'g' flag; BQ uses r'' prefix
-    const regexpReplace = config.usePg
-        ? "regexp_replace(lower(account_name), '[^a-z0-9]+', '', 'g')"
-        : "REGEXP_REPLACE(LOWER(account_name), r'[^a-z0-9]+', '')";
-    const castNull = config.usePg ? "NULL::double precision" : "CAST(NULL AS FLOAT64)";
-    const dateExpr = (p) => config.usePg ? `${p}::date` : `DATE(${p})`;
-    const emptyCheck = (col) => config.usePg
-        ? `(@${col} = '' OR lower(${col === "stateSegmentActivityType" ? "activity_type" : "lead_type"}) = lower(@${col}))`
-        : `(@${col} = "" OR LOWER(${col === "stateSegmentActivityType" ? "activity_type" : "lead_type"}) = LOWER(@${col}))`;
-    const emptyStr = config.usePg ? "''" : '""';
     return `
       WITH perf_base AS (
         SELECT
@@ -221,7 +183,7 @@ function getPerfScopedCteFromDaily() {
           company_account_id,
           binds AS total_binds,
           sold AS transaction_sold,
-          ${castNull} AS transaction_sold_alt,
+          CAST(NULL AS FLOAT64) AS transaction_sold_alt,
           price_sum AS price,
           target_cpb_sum AS bq_target_cpb,
           scored_policies,
@@ -229,15 +191,15 @@ function getPerfScopedCteFromDaily() {
           lifetime_cost_sum AS lifetime_cost,
           avg_profit_sum AS avg_profit,
           avg_equity_sum AS avg_equity
-        FROM ${tbl}
-        WHERE ${emptyCheck("stateSegmentActivityType")}
-          AND ${emptyCheck("stateSegmentLeadType")}
+        FROM ${TARGETS_PERF_DAILY_TABLE}
+        WHERE (@stateSegmentActivityType = "" OR LOWER(activity_type) = LOWER(@stateSegmentActivityType))
+          AND (@stateSegmentLeadType = "" OR LOWER(lead_type) = LOWER(@stateSegmentLeadType))
       ),
       perf AS (
         SELECT
           state,
           segment,
-          ${regexpReplace} AS source_key,
+          REGEXP_REPLACE(LOWER(account_name), r'[^a-z0-9]+', '') AS source_key,
           SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)) AS sold,
           SUM(COALESCE(total_binds, 0)) AS binds,
           SUM(COALESCE(scored_policies, 0)) AS scored_policies,
@@ -300,16 +262,14 @@ function getPerfScopedCteFromDaily() {
             NULLIF(SUM(COALESCE(scored_policies, 0)), 0)
           ) AS avg_lifetime_cost
         FROM perf_base
-        WHERE (@startDate = ${emptyStr} OR event_date >= ${dateExpr("@startDate")})
-          AND (@endDate = ${emptyStr} OR event_date <= ${dateExpr("@endDate")})
-          AND segment IN ('MCH', 'MCR', 'SCH', 'SCR', 'HOME', 'RENT')
+        WHERE (@startDate = "" OR event_date >= DATE(@startDate))
+          AND (@endDate = "" OR event_date <= DATE(@endDate))
+          AND segment IN ('MCH', 'MCR', 'SCH', 'SCR')
         GROUP BY state, segment, source_key
       )
   `;
 }
 function ensureTargetsTableExists() {
-    if (config.usePg)
-        return Promise.resolve();
     if (!targetsTableReady) {
         targetsTableReady = query(`
         CREATE TABLE IF NOT EXISTS ${table("targets")} (
@@ -328,114 +288,45 @@ function ensureTargetsTableExists() {
     }
     return targetsTableReady;
 }
-export async function getTarget(targetId) {
-    await ensureTargetsTableExists();
-    const rows = await query(`SELECT target_id, state, segment, source, target_value, target_cor FROM ${table("targets")} WHERE target_id = @targetId LIMIT 1`, { targetId });
-    return rows[0] ?? null;
-}
 export async function listTargets(filters) {
     await ensureTargetsTableExists();
     const normalized = normalizeFilters(filters);
     const perfScopedCte = (await hasTargetsPerfDailyTable()) ? getPerfScopedCteFromDaily() : getPerfScopedCteFromRaw();
     const hasPlanIdColumn = await hasTargetsPlanIdColumn();
-    const hasAltColumn = await hasTargetsActivityLeadTypeColumn();
     const planId = String(filters.planId || "").trim();
-    const activityLeadType = String(filters.activityLeadType || "").trim();
-    const conditions = [];
-    if (hasPlanIdColumn && planId)
-        conditions.push("t.plan_id = @planId");
-    if (hasAltColumn && activityLeadType)
-        conditions.push("t.activity_lead_type = @altFilter");
-    const whereClause = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
-    const queryParams = { ...normalized, planId, altFilter: activityLeadType };
-    const castCreated = config.usePg ? "t.created_at::text" : "CAST(t.created_at AS STRING)";
-    const castUpdated = config.usePg ? "t.updated_at::text" : "CAST(t.updated_at AS STRING)";
-    // Safe division helper — works in both BQ and PG
-    const sd = (num, den) => `COALESCE((${num}) / NULLIF((${den}), 0), 0)`;
-    const rows = await query(`
-      ${perfScopedCte},
-      perf_agg AS (
-        SELECT
-          state,
-          segment,
-          COALESCE(SUM(sold), 0) AS sold,
-          COALESCE(SUM(binds), 0) AS binds,
-          COALESCE(SUM(scored_policies), 0) AS scored_policies,
-          ${sd("SUM(COALESCE(cpb, 0) * COALESCE(binds, 0))", "SUM(COALESCE(binds, 0))")} AS cpb,
-          ${sd("SUM(COALESCE(target_cpb, 0) * COALESCE(binds, 0))", "SUM(COALESCE(binds, 0))")} AS target_cpb,
-          ${sd("SUM(COALESCE(avg_profit, 0) * COALESCE(scored_policies, 0))", "SUM(COALESCE(scored_policies, 0))")} AS avg_profit,
-          ${sd("SUM(COALESCE(avg_equity, 0) * COALESCE(scored_policies, 0))", "SUM(COALESCE(scored_policies, 0))")} AS avg_equity,
-          ${sd("SUM(COALESCE(avg_lifetime_premium, 0) * COALESCE(scored_policies, 0))", "SUM(COALESCE(scored_policies, 0))")} AS avg_lifetime_premium,
-          ${sd("SUM(COALESCE(avg_lifetime_cost, 0) * COALESCE(scored_policies, 0))", "SUM(COALESCE(scored_policies, 0))")} AS avg_lifetime_cost
-        FROM perf
-        GROUP BY state, segment
-      )
+    const whereClause = hasPlanIdColumn && planId ? "WHERE t.plan_id = @planId" : "";
+    const queryParams = hasPlanIdColumn && planId ? { ...normalized, planId } : normalized;
+    return query(`
+      ${perfScopedCte}
       SELECT
         t.target_id,
         t.state,
         t.segment,
         t.source,
         t.target_value,
-        COALESCE(t.target_cor, 0) AS target_cor,
-        pa.target_cpb AS current_target,
-        pa.sold,
-        pa.binds,
-        COALESCE(pa.scored_policies, 0) AS scored_policies,
-        pa.cpb,
-        pa.target_cpb,
-        ${sd("pa.target_cpb", "pa.cpb")} AS performance,
-        CASE
-          WHEN COALESCE(pa.scored_policies, 0) = 0 OR COALESCE(pa.avg_equity, 0) = 0 THEN 0
-          ELSE ${sd(`(pa.avg_profit - 0.8 * (${sd("pa.cpb", "0.81")} + @qbc))`, "pa.avg_equity")}
-        END AS roe,
-        CASE
-          WHEN COALESCE(pa.scored_policies, 0) = 0 OR COALESCE(pa.avg_lifetime_premium, 0) = 0 THEN 0
-          ELSE ${sd(`(${sd("pa.cpb", "0.81")} + @qbc + pa.avg_lifetime_cost)`, "pa.avg_lifetime_premium")}
-        END AS combined_ratio,
-        pa.avg_profit,
-        pa.avg_equity,
-        pa.avg_lifetime_premium,
-        pa.avg_lifetime_cost,
-        ${castCreated} AS created_at,
-        ${castUpdated} AS updated_at
+        p.target_cpb AS current_target,
+        p.sold,
+        p.binds,
+        COALESCE(p.scored_policies, 0) AS scored_policies,
+        p.cpb,
+        p.target_cpb,
+        p.performance,
+        p.roe,
+        p.combined_ratio,
+        p.avg_profit,
+        p.avg_equity,
+        p.avg_lifetime_premium,
+        p.avg_lifetime_cost,
+        CAST(t.created_at AS STRING) AS created_at,
+        CAST(t.updated_at AS STRING) AS updated_at
       FROM ${table("targets")} t
-      LEFT JOIN perf_agg pa
-        ON pa.state = t.state
-       AND pa.segment = t.segment
+      LEFT JOIN perf p
+        ON p.state = t.state
+       AND p.segment = t.segment
+       AND p.source_key = REGEXP_REPLACE(LOWER(t.source), r'[^a-z0-9]+', '')
       ${whereClause}
       ORDER BY t.state, t.segment, t.source
     `, queryParams);
-    // Populate target_cor from plan strategy rules (authoritative source)
-    if (planId) {
-        try {
-            const rules = await getStrategyRulesForPlan(planId, filters.activityLeadType);
-            if (rules.length > 0) {
-                // Build state+segment -> corTarget lookup from rules
-                const corLookup = new Map();
-                for (const rule of rules) {
-                    if (rule.corTarget <= 0)
-                        continue;
-                    for (const st of rule.states) {
-                        for (const seg of rule.segments) {
-                            const key = `${st}|${seg}`;
-                            if (!corLookup.has(key))
-                                corLookup.set(key, rule.corTarget);
-                        }
-                    }
-                }
-                for (const row of rows) {
-                    const ruleVal = corLookup.get(`${row.state}|${row.segment}`);
-                    if (ruleVal) {
-                        row.target_cor = ruleVal;
-                    }
-                }
-            }
-        }
-        catch {
-            // Non-fatal: strategy rules lookup failed, rows keep their DB target_cor
-        }
-    }
-    return rows;
 }
 export async function getTargetsMetrics(rows, filters) {
     const normalized = normalizeFilters(filters);
@@ -446,34 +337,6 @@ export async function getTargetsMetrics(rows, filters) {
         source: normalizeSource(row.source || ""),
         accountId: normalizeAccountId(row.accountId)
     })));
-    const regexpReplace = config.usePg
-        ? "regexp_replace(lower(account_name), '[^a-z0-9]+', '', 'g')"
-        : "REGEXP_REPLACE(LOWER(account_name), r'[^a-z0-9]+', '')";
-    const emptyStr = config.usePg ? "''" : '""';
-    const dateExpr = (p) => config.usePg ? `${p}::date` : `DATE(${p})`;
-    // BQ and PG use different JSON/array-unnest syntax for input_rows CTE
-    const inputRowsCte = config.usePg
-        ? `
-      input_rows AS (
-        SELECT
-          upper(item->>'state') AS state,
-          upper(item->>'segment') AS segment,
-          item->>'source' AS source,
-          COALESCE(item->>'accountId', '') AS account_id,
-          regexp_replace(lower(item->>'source'), '[^a-z0-9]+', '', 'g') AS source_key
-        FROM jsonb_array_elements(@rowsJson::jsonb) AS item
-      )`
-        : `
-      input_rows AS (
-        SELECT
-          UPPER(JSON_VALUE(item, '$.state')) AS state,
-          UPPER(JSON_VALUE(item, '$.segment')) AS segment,
-          JSON_VALUE(item, '$.source') AS source,
-          COALESCE(JSON_VALUE(item, '$.accountId'), '') AS account_id,
-          REGEXP_REPLACE(LOWER(JSON_VALUE(item, '$.source')), r'[^a-z0-9]+', '') AS source_key
-        FROM UNNEST(JSON_EXTRACT_ARRAY(@rowsJson)) AS item
-      )`;
-    const emptyIdCheck = config.usePg ? "''" : '""';
     return query(`
       ${perfScopedCte},
       perf_account AS (
@@ -481,7 +344,7 @@ export async function getTargetsMetrics(rows, filters) {
           state,
           segment,
           company_account_id,
-          ${regexpReplace} AS source_key,
+          REGEXP_REPLACE(LOWER(account_name), r'[^a-z0-9]+', '') AS source_key,
           SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)) AS sold,
           SUM(COALESCE(total_binds, 0)) AS binds,
           SUM(COALESCE(scored_policies, 0)) AS scored_policies,
@@ -544,12 +407,20 @@ export async function getTargetsMetrics(rows, filters) {
             NULLIF(SUM(COALESCE(scored_policies, 0)), 0)
           ) AS avg_lifetime_cost
         FROM perf_base
-        WHERE (@startDate = ${emptyStr} OR event_date >= ${dateExpr("@startDate")})
-          AND (@endDate = ${emptyStr} OR event_date <= ${dateExpr("@endDate")})
-          AND segment IN ('MCH', 'MCR', 'SCH', 'SCR', 'HOME', 'RENT')
+        WHERE (@startDate = "" OR event_date >= DATE(@startDate))
+          AND (@endDate = "" OR event_date <= DATE(@endDate))
+          AND segment IN ('MCH', 'MCR', 'SCH', 'SCR')
         GROUP BY state, segment, company_account_id, source_key
       ),
-      ${inputRowsCte}
+      input_rows AS (
+        SELECT
+          UPPER(JSON_VALUE(item, '$.state')) AS state,
+          UPPER(JSON_VALUE(item, '$.segment')) AS segment,
+          JSON_VALUE(item, '$.source') AS source,
+          COALESCE(JSON_VALUE(item, '$.accountId'), '') AS account_id,
+          REGEXP_REPLACE(LOWER(JSON_VALUE(item, '$.source')), r'[^a-z0-9]+', '') AS source_key
+        FROM UNNEST(JSON_EXTRACT_ARRAY(@rowsJson)) AS item
+      )
       SELECT
         i.state,
         i.segment,
@@ -572,83 +443,42 @@ export async function getTargetsMetrics(rows, filters) {
       LEFT JOIN perf_account pa
         ON pa.state = i.state
        AND pa.segment = i.segment
-       AND i.account_id != ${emptyIdCheck}
+       AND i.account_id != ""
        AND pa.company_account_id = i.account_id
        AND pa.source_key = i.source_key
       LEFT JOIN perf p
         ON p.state = i.state
        AND p.segment = i.segment
-       AND i.account_id = ${emptyIdCheck}
+       AND i.account_id = ""
        AND p.source_key = i.source_key
     `, { ...normalized, rowsJson });
 }
-export async function createTarget(userId, planId, activityLeadType) {
+export async function createTarget(userId, planId) {
     await ensureTargetsTableExists();
     const targetId = randomUUID();
     const hasPlanIdColumn = await hasTargetsPlanIdColumn();
-    const hasAltColumn = await hasTargetsActivityLeadTypeColumn();
     const normalizedPlanId = String(planId || "").trim();
-    const alt = String(activityLeadType || "").trim();
-    const altCol = hasAltColumn ? ", activity_lead_type" : "";
-    const altVal = hasAltColumn ? ", @alt" : "";
     if (hasPlanIdColumn) {
         await query(`
         INSERT INTO ${table("targets")}
-        (target_id, plan_id${altCol}, state, segment, source, target_value, target_cor, created_by, created_at, updated_by, updated_at)
-        VALUES (@targetId, NULLIF(@planId, '')${altVal}, 'NA', 'MCH', 'New Source', 0, 0, @userId, CURRENT_TIMESTAMP(), @userId, CURRENT_TIMESTAMP())
-      `, { targetId, userId, planId: normalizedPlanId, alt });
+        (target_id, plan_id, state, segment, source, target_value, created_by, created_at, updated_by, updated_at)
+        VALUES (@targetId, NULLIF(@planId, ''), 'NA', 'MCH', 'New Source', 0, @userId, CURRENT_TIMESTAMP(), @userId, CURRENT_TIMESTAMP())
+      `, { targetId, userId, planId: normalizedPlanId });
         return { targetId };
     }
     await query(`
       INSERT INTO ${table("targets")}
-      (target_id${altCol}, state, segment, source, target_value, target_cor, created_by, created_at, updated_by, updated_at)
-      VALUES (@targetId${altVal}, 'NA', 'MCH', 'New Source', 0, 0, @userId, CURRENT_TIMESTAMP(), @userId, CURRENT_TIMESTAMP())
-    `, { targetId, userId, alt });
+      (target_id, state, segment, source, target_value, created_by, created_at, updated_by, updated_at)
+      VALUES (@targetId, 'NA', 'MCH', 'New Source', 0, @userId, CURRENT_TIMESTAMP(), @userId, CURRENT_TIMESTAMP())
+    `, { targetId, userId });
     return { targetId };
 }
-export async function batchCreateTargets(rows, userId, planId, activityLeadType) {
-    await ensureTargetsTableExists();
-    const hasPlanIdColumn = await hasTargetsPlanIdColumn();
-    const hasAltColumn = await hasTargetsActivityLeadTypeColumn();
-    const alt = String(activityLeadType || "").trim();
-    const BATCH = 500;
-    const esc = (s) => s.replace(/'/g, "''");
-    for (let i = 0; i < rows.length; i += BATCH) {
-        const batch = rows.slice(i, i + BATCH);
-        const vals = batch
-            .map((r) => {
-            const id = randomUUID();
-            const st = normalizeState(r.state);
-            const seg = normalizeSegment(r.segment);
-            const src = normalizeSource(r.source);
-            const val = Number(r.targetValue) || 0;
-            const altPart = hasAltColumn ? `, '${esc(alt)}'` : "";
-            if (hasPlanIdColumn) {
-                return `('${id}', '${esc(planId)}'${altPart}, '${esc(st)}', '${esc(seg)}', '${esc(src)}', ${val}, 0, '${esc(userId)}', CURRENT_TIMESTAMP(), '${esc(userId)}', CURRENT_TIMESTAMP())`;
-            }
-            return `('${id}'${altPart}, '${esc(st)}', '${esc(seg)}', '${esc(src)}', ${val}, 0, '${esc(userId)}', CURRENT_TIMESTAMP(), '${esc(userId)}', CURRENT_TIMESTAMP())`;
-        })
-            .join(",\n");
-        let cols = hasPlanIdColumn
-            ? "target_id, plan_id, state, segment, source, target_value, target_cor, created_by, created_at, updated_by, updated_at"
-            : "target_id, state, segment, source, target_value, target_cor, created_by, created_at, updated_by, updated_at";
-        if (hasAltColumn) {
-            cols = hasPlanIdColumn
-                ? "target_id, plan_id, activity_lead_type, state, segment, source, target_value, target_cor, created_by, created_at, updated_by, updated_at"
-                : "target_id, activity_lead_type, state, segment, source, target_value, target_cor, created_by, created_at, updated_by, updated_at";
-        }
-        await query(`INSERT INTO ${table("targets")} (${cols}) VALUES ${vals}`);
-    }
-    return rows.length;
-}
-export async function updateTarget(targetId, input, userId, planId, activityLeadType) {
+export async function updateTarget(targetId, input, userId, planId) {
     await ensureTargetsTableExists();
     const updates = [];
     const params = { targetId, userId };
     const hasPlanIdColumn = await hasTargetsPlanIdColumn();
-    const hasAltColumn = await hasTargetsActivityLeadTypeColumn();
     const normalizedPlanId = String(planId || "").trim();
-    const alt = String(activityLeadType || "").trim();
     if (typeof input.state === "string") {
         updates.push("state = @state");
         params.state = normalizeState(input.state);
@@ -665,113 +495,15 @@ export async function updateTarget(targetId, input, userId, planId, activityLead
         updates.push("target_value = @targetValue");
         params.targetValue = input.targetValue;
     }
-    if (typeof input.targetCor === "number" && Number.isFinite(input.targetCor)) {
-        updates.push("target_cor = @targetCor");
-        params.targetCor = input.targetCor;
-    }
     if (!updates.length) {
         return;
     }
     updates.push("updated_by = @userId");
     updates.push("updated_at = CURRENT_TIMESTAMP()");
-    const allParams = { ...params, ...(hasPlanIdColumn && normalizedPlanId ? { planId: normalizedPlanId } : {}), ...(hasAltColumn && alt ? { alt } : {}) };
     await query(`
       UPDATE ${table("targets")}
       SET ${updates.join(",\n          ")}
       WHERE target_id = @targetId
       ${hasPlanIdColumn && normalizedPlanId ? "  AND plan_id = @planId" : ""}
-      ${hasAltColumn && alt ? "  AND activity_lead_type = @alt" : ""}
-    `, allParams);
-}
-export async function listDefaultTargetsWithPerf(targetKey, filters) {
-    const normalized = normalizeFilters(filters);
-    const perfScopedCte = (await hasTargetsPerfDailyTable()) ? getPerfScopedCteFromDaily() : getPerfScopedCteFromRaw();
-    const planId = String(filters.planId || "").trim();
-    const coalesce = config.usePg ? "COALESCE" : "IFNULL";
-    const sd = (num, den) => `COALESCE((${num}) / NULLIF((${den}), 0), 0)`;
-    const rows = await query(`
-      ${perfScopedCte},
-      perf_agg AS (
-        SELECT
-          state,
-          segment,
-          COALESCE(SUM(sold), 0) AS sold,
-          COALESCE(SUM(binds), 0) AS binds,
-          COALESCE(SUM(scored_policies), 0) AS scored_policies,
-          ${sd("SUM(COALESCE(cpb, 0) * COALESCE(binds, 0))", "SUM(COALESCE(binds, 0))")} AS cpb,
-          ${sd("SUM(COALESCE(target_cpb, 0) * COALESCE(binds, 0))", "SUM(COALESCE(binds, 0))")} AS target_cpb,
-          ${sd("SUM(COALESCE(avg_profit, 0) * COALESCE(scored_policies, 0))", "SUM(COALESCE(scored_policies, 0))")} AS avg_profit,
-          ${sd("SUM(COALESCE(avg_equity, 0) * COALESCE(scored_policies, 0))", "SUM(COALESCE(scored_policies, 0))")} AS avg_equity,
-          ${sd("SUM(COALESCE(avg_lifetime_premium, 0) * COALESCE(scored_policies, 0))", "SUM(COALESCE(scored_policies, 0))")} AS avg_lifetime_premium,
-          ${sd("SUM(COALESCE(avg_lifetime_cost, 0) * COALESCE(scored_policies, 0))", "SUM(COALESCE(scored_policies, 0))")} AS avg_lifetime_cost
-        FROM perf
-        GROUP BY state, segment
-      )
-      SELECT
-        dt.id AS target_id,
-        dt.state,
-        dt.segment,
-        dt.source,
-        dt.target_value,
-        0 AS target_cor,
-        ${coalesce}(dt.account_id, 0) AS account_id,
-        ${coalesce}(dt.company_id, 0) AS company_id,
-        ${coalesce}(dt.original_id, '') AS original_id,
-        ${coalesce}(dt.segment_name, '') AS segment_name,
-        ${coalesce}(dt.attributes, '') AS attributes,
-        pa.target_cpb AS current_target,
-        pa.sold,
-        pa.binds,
-        COALESCE(pa.scored_policies, 0) AS scored_policies,
-        pa.cpb,
-        pa.target_cpb,
-        ${sd("pa.target_cpb", "pa.cpb")} AS performance,
-        CASE
-          WHEN COALESCE(pa.scored_policies, 0) = 0 OR COALESCE(pa.avg_equity, 0) = 0 THEN 0
-          ELSE ${sd(`(pa.avg_profit - 0.8 * (${sd("pa.cpb", "0.81")} + @qbc))`, "pa.avg_equity")}
-        END AS roe,
-        CASE
-          WHEN COALESCE(pa.scored_policies, 0) = 0 OR COALESCE(pa.avg_lifetime_premium, 0) = 0 THEN 0
-          ELSE ${sd(`(${sd("pa.cpb", "0.81")} + @qbc + pa.avg_lifetime_cost)`, "pa.avg_lifetime_premium")}
-        END AS combined_ratio,
-        pa.avg_profit,
-        pa.avg_equity,
-        pa.avg_lifetime_premium,
-        pa.avg_lifetime_cost
-      FROM ${table("default_targets")} dt
-      LEFT JOIN perf_agg pa
-        ON pa.state = dt.state
-       AND pa.segment = dt.segment
-      WHERE dt.target_key = @targetKey
-      ORDER BY dt.state, dt.segment, dt.source
-    `, { ...normalized, targetKey });
-    // Populate target_cor from plan strategy rules
-    if (planId) {
-        try {
-            const rules = await getStrategyRulesForPlan(planId, filters.activityLeadType);
-            if (rules.length > 0) {
-                const corLookup = new Map();
-                for (const rule of rules) {
-                    if (rule.corTarget <= 0)
-                        continue;
-                    for (const st of rule.states) {
-                        for (const seg of rule.segments) {
-                            const k = `${st}|${seg}`;
-                            if (!corLookup.has(k))
-                                corLookup.set(k, rule.corTarget);
-                        }
-                    }
-                }
-                for (const row of rows) {
-                    const ruleVal = corLookup.get(`${row.state}|${row.segment}`);
-                    if (ruleVal)
-                        row.target_cor = ruleVal;
-                }
-            }
-        }
-        catch {
-            // Non-fatal
-        }
-    }
-    return rows;
+    `, hasPlanIdColumn && normalizedPlanId ? { ...params, planId: normalizedPlanId } : params);
 }

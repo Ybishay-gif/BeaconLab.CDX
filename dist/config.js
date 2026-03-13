@@ -16,10 +16,5 @@ export const config = {
     dataset: required("BQ_DATASET"),
     analyticsDataset: process.env.BQ_ANALYTICS_DATASET || required("BQ_DATASET"),
     adminAccessCode: required("ADMIN_ACCESS_CODE"),
-    rawCrossTacticTable: process.env.BQ_RAW_CROSS_TACTIC_TABLE || "`crblx-beacon-prod.Custom_Reports.Cross Tactic Analysis Full Data `",
-    // PostgreSQL — runtime DB (BQ kept only for daily sync)
-    usePg: process.env.USE_PG === "true",
-    cloudSqlConnectionName: process.env.CLOUD_SQL_CONNECTION_NAME || "",
-    // Shadow mode: when true, cached BQ analytics functions read from PG instead
-    usePgAnalytics: process.env.USE_PG_ANALYTICS === "true",
+    rawCrossTacticTable: process.env.BQ_RAW_CROSS_TACTIC_TABLE || "`crblx-beacon-prod.Custom_Reports.Cross Tactic Analysis Full Data `"
 };
