@@ -253,38 +253,36 @@ export function buildPlanOutcome(
     }
   }
 
-  // 5. Collect remainder — pairs where state or channel was already assigned
-  const remainder: OutcomeGroup[] = [];
-  for (const p of recommended) {
-    if (!assignedStates.has(p.state) || !assignedChannels.has(p.channel)) {
-      // This pair's state or channel wasn't in any group (shouldn't happen
-      // unless the pair was skipped). Check if it's truly unassigned.
-      if (!assignedStates.has(p.state) && !assignedChannels.has(p.channel)) {
-        // Both unassigned — this pair was somehow missed (shouldn't happen)
-        remainder.push(
-          aggregateGroup(nextGroupId++, p.tp, [p.state], [p.channel], [p.row])
-        );
-        assignedStates.add(p.state);
-        assignedChannels.add(p.channel);
-      }
-    }
-  }
-
-  // Also handle pairs where one dimension is assigned but not both.
-  // Under strict uniqueness, these pairs are "orphaned" — they can't form
-  // new groups. We still list them as remainder for visibility.
+  // 5. Collect remainder — pairs not in any rectangle group.
+  //    Group by (state, TP) so e.g. MA at -20% with 5 channels = 1 row.
+  const leftover: RecommendedPair[] = [];
   for (const p of recommended) {
     const inGroup = groups.some(
       (g) => g.states.includes(p.state) && g.channels.includes(p.channel)
     );
-    const inRemainder = remainder.some(
-      (g) => g.states.includes(p.state) && g.channels.includes(p.channel)
+    if (!inGroup) leftover.push(p);
+  }
+
+  // Bucket by "state|tp"
+  const buckets = new Map<string, RecommendedPair[]>();
+  for (const p of leftover) {
+    const key = `${p.state}|${p.tp}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key)!.push(p);
+  }
+
+  const remainder: OutcomeGroup[] = [];
+  for (const pairs of buckets.values()) {
+    const channels = [...new Set(pairs.map((p) => p.channel))].sort();
+    remainder.push(
+      aggregateGroup(
+        nextGroupId++,
+        pairs[0].tp,
+        [pairs[0].state],
+        channels,
+        pairs.map((p) => p.row)
+      )
     );
-    if (!inGroup && !inRemainder) {
-      remainder.push(
-        aggregateGroup(nextGroupId++, p.tp, [p.state], [p.channel], [p.row])
-      );
-    }
   }
 
   // Sort groups by testing_point ascending, then by pair_count descending
