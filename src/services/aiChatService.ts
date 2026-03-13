@@ -274,37 +274,64 @@ async function handleFunctionCall(
   args: Record<string, unknown>,
   userId: string,
 ): Promise<AiChatResponse> {
-  // Execute the action
-  let actionResult: ActionResult;
-  try {
-    actionResult = await executeAction(functionName, args, userId);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    actionResult = { response: { error: `Action failed: ${msg}` } };
+  const MAX_TOOL_ROUNDS = 5; // prevent infinite loops
+  let currentName = functionName;
+  let currentArgs = args;
+  let lastAction: ActionResult["action"] | undefined;
+
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    // Execute the action
+    let actionResult: ActionResult;
+    try {
+      actionResult = await executeAction(currentName, currentArgs, userId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      actionResult = { response: { error: `Action failed: ${msg}` } };
+    }
+
+    // Track the last user-facing action (report_created, action_list)
+    if (actionResult.action) lastAction = actionResult.action;
+
+    // Send function result back to Gemini
+    const functionResponse = await withRetry(() =>
+      chat.sendMessage([
+        {
+          functionResponse: {
+            name: currentName,
+            response: actionResult.response,
+          },
+        },
+      ]),
+    );
+
+    // Check if Gemini wants to call another function
+    const nextCall = functionResponse.response.candidates?.[0]?.content?.parts?.find(
+      (p) => p.functionCall,
+    );
+
+    if (nextCall?.functionCall) {
+      // Chain to the next tool call
+      currentName = nextCall.functionCall.name;
+      currentArgs = (nextCall.functionCall.args as Record<string, unknown>) || {};
+      continue;
+    }
+
+    // No more function calls — Gemini produced a text response
+    const answer = functionResponse.response.text();
+    session.history.push({ role: "model", parts: [{ text: answer }] });
+    trimHistory(session);
+
+    return {
+      answer,
+      action: lastAction,
+    };
   }
 
-  // Send function result back to Gemini for a human-friendly summary
-  const functionResponse = await withRetry(() =>
-    chat.sendMessage([
-      {
-        functionResponse: {
-          name: functionName,
-          response: actionResult.response,
-        },
-      },
-    ]),
-  );
-
-  const answer = functionResponse.response.text();
-
-  // Store the full exchange in history (model's function call + function response + model summary)
-  session.history.push({ role: "model", parts: [{ text: answer }] });
+  // Exhausted rounds — return what we have
+  const fallback = "I ran into a limit while processing your request. Could you try simplifying your question?";
+  session.history.push({ role: "model", parts: [{ text: fallback }] });
   trimHistory(session);
-
-  return {
-    answer,
-    action: actionResult.action,
-  };
+  return { answer: fallback, action: lastAction };
 }
 
 /* ------------------------------------------------------------------ */
