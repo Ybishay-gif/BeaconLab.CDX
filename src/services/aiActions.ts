@@ -9,7 +9,7 @@ import {
   SchemaType,
   type FunctionDeclarationsTool,
 } from "@google/generative-ai";
-import { createReport, getTableSchema, type CreateReportInput } from "./reportService.js";
+import { createReport, getTableSchema, getFilterValues, type CreateReportInput } from "./reportService.js";
 
 /* ------------------------------------------------------------------ */
 /*  Tool declarations — passed to Gemini so it knows what it can call  */
@@ -21,6 +21,30 @@ export const ACTION_TOOLS: FunctionDeclarationsTool = {
       name: "list_available_actions",
       description:
         "List all actions the AI assistant can perform on the platform. Call this when the user asks what you can do, what actions are available, or wants help.",
+    },
+    {
+      name: "lookup_filter_values",
+      description:
+        "Look up valid values for a report filter column. Use this to verify or find correct account names, channel names, states, or any other filterable column before generating a report. Supports fuzzy matching — pass a search term to find close matches. Common columns: account_name, attribution_channel, data_state, transaction_sold.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          column_name: {
+            type: SchemaType.STRING,
+            description: "The column to look up values for (e.g. 'account_name', 'attribution_channel', 'data_state')",
+          },
+          search: {
+            type: SchemaType.STRING,
+            description: "Optional search term to filter results. Returns values containing this term (case-insensitive). E.g. 'QS' to find accounts containing 'QS'.",
+          },
+        },
+        required: ["column_name"],
+      },
+    },
+    {
+      name: "list_report_columns",
+      description:
+        "List all available columns for the Cross Tactic Analysis report. Use this when the user asks what data/columns are available, or wants to select specific columns for their report.",
     },
     {
       name: "generate_report",
@@ -60,6 +84,11 @@ export const ACTION_TOOLS: FunctionDeclarationsTool = {
             type: SchemaType.BOOLEAN,
             description: "Whether to include unsold transactions. Defaults to true.",
           },
+          selected_columns: {
+            type: SchemaType.ARRAY,
+            items: { type: SchemaType.STRING },
+            description: "Specific columns to include in the report. Use list_report_columns to see available columns. Leave empty for all columns.",
+          },
         },
         required: ["report_name"],
       },
@@ -93,6 +122,10 @@ export async function executeAction(
   switch (actionName) {
     case "list_available_actions":
       return handleListActions();
+    case "lookup_filter_values":
+      return await handleLookupFilterValues(args);
+    case "list_report_columns":
+      return await handleListReportColumns();
     case "generate_report":
       return await handleGenerateReport(args, userId);
     default:
@@ -120,6 +153,64 @@ function handleListActions(): ActionResult {
   };
 }
 
+async function handleLookupFilterValues(
+  args: Record<string, unknown>,
+): Promise<ActionResult> {
+  const columnName = args.column_name as string;
+  if (!columnName) {
+    return { response: { error: "column_name is required" } };
+  }
+
+  try {
+    const allValues = await getFilterValues(columnName);
+    const search = (args.search as string)?.toLowerCase();
+
+    let values = allValues;
+    if (search) {
+      values = allValues.filter((v) => v.toLowerCase().includes(search));
+    }
+
+    // Cap at 50 to keep response manageable
+    const truncated = values.length > 50;
+    const shown = values.slice(0, 50);
+
+    return {
+      response: {
+        column: columnName,
+        total_values: allValues.length,
+        matching_values: values.length,
+        values: shown,
+        truncated,
+        hint: search && values.length === 0
+          ? `No values containing "${search}" found. Try a shorter search term or call without search to see all values.`
+          : undefined,
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { response: { error: `Failed to look up filter values: ${msg}` } };
+  }
+}
+
+async function handleListReportColumns(): Promise<ActionResult> {
+  try {
+    const schema = await getTableSchema();
+    const columns = schema.map((c) => ({
+      name: c.column_name,
+      type: c.data_type,
+    }));
+    return {
+      response: {
+        total_columns: columns.length,
+        columns,
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { response: { error: `Failed to list columns: ${msg}` } };
+  }
+}
+
 async function handleGenerateReport(
   args: Record<string, unknown>,
   userId: string,
@@ -137,9 +228,13 @@ async function handleGenerateReport(
   const accounts = (args.accounts as string[]) || [];
   const includeUnsold = args.include_unsold !== false; // default true
 
-  // Get all available columns for the report
+  // Get columns — use user-specified columns or all
   const schema = await getTableSchema();
-  const allColumns = schema.map((c) => c.column_name);
+  const allColumnNames = schema.map((c) => c.column_name);
+  const userColumns = (args.selected_columns as string[]) || [];
+  const allColumns = userColumns.length > 0
+    ? userColumns.filter((c) => allColumnNames.includes(c))
+    : allColumnNames;
 
   // Build fixed filters
   const fixedFilters: CreateReportInput["fixedFilters"] = {

@@ -13,6 +13,7 @@ import { chatRoutes } from "./api/chatRoutes.js";
 import { aiChatRoutes } from "./api/aiChatRoutes.js";
 import { ticketsRoutes } from "./api/ticketsRoutes.js";
 import { reportRoutes } from "./api/reportRoutes.js";
+import { rolesRoutes } from "./api/rolesRoutes.js";
 export const plansRouter = Router();
 // Admin routes (cache warming, etc.) — no auth required for Cloud Scheduler
 plansRouter.use(adminRoutes);
@@ -30,3 +31,4 @@ plansRouter.use(chatRoutes);
 plansRouter.use(aiChatRoutes);
 plansRouter.use(ticketsRoutes);
 plansRouter.use(reportRoutes);
+plansRouter.use(rolesRoutes);

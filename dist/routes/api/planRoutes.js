@@ -1,14 +1,12 @@
 import { Router } from "express";
 import { z } from "zod";
-import { requireRole } from "../../middleware/auth.js";
+import { requirePermission } from "../../middleware/auth.js";
 import { appendDecisions, clonePlan, createPlan, createRun, deletePlan, getParameterValues, getPlan, getRun, getRunResults, listPlanParameters, listPlans, updatePlan, upsertParameters, upsertPlanContext } from "../../services/plansService.js";
 import { appendChangeLog } from "../../services/changeLogService.js";
 import { getPriceExploration } from "../../services/analyticsService.js";
 import { buildPlanOutcome } from "../../services/planOutcomeService.js";
 import { parseOptionalNumber } from "./queryParsers.js";
 const planContextSchema = z.object({
-    activity: z.string().optional(),
-    lead_type: z.string().optional(),
     perf_start_date: z.string().optional(),
     perf_end_date: z.string().optional(),
     price_start_date: z.string().optional(),
@@ -65,8 +63,6 @@ planRoutes.get("/plans", async (_req, res, next) => {
             }
             return {
                 ...p,
-                activity: ctx.activity ?? "",
-                lead_type: ctx.leadType ?? "",
                 // Support both new (perfStartDate) and legacy (performanceStartDate) field names
                 perf_start_date: ctx.perfStartDate ?? ctx.performanceStartDate ?? "",
                 perf_end_date: ctx.perfEndDate ?? ctx.performanceEndDate ?? "",
@@ -82,7 +78,7 @@ planRoutes.get("/plans", async (_req, res, next) => {
         next(error);
     }
 });
-planRoutes.post("/plans", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.post("/plans", requirePermission("plan_builder:edit"), async (req, res, next) => {
     try {
         const parsed = createPlanSchema.parse(req.body);
         const planName = (parsed.planName || parsed.plan_name);
@@ -100,8 +96,6 @@ planRoutes.post("/plans", requireRole(["admin", "planner"]), async (req, res, ne
                 priceEndDate: parsed.price_end_date ?? "",
                 qbcClicks: parsed.qbc_clicks ?? 0,
                 qbcLeadsCalls: parsed.qbc_leads_calls ?? 0,
-                activity: parsed.activity ?? "",
-                leadType: parsed.lead_type ?? ""
             });
         }
         appendChangeLog({ userId: req.user.userId, email: req.user.email }, { objectType: "plan", objectId: result.planId, action: "create", after: { planName, description: parsed.description } }).catch(console.error);
@@ -111,7 +105,7 @@ planRoutes.post("/plans", requireRole(["admin", "planner"]), async (req, res, ne
         next(error);
     }
 });
-planRoutes.post("/plans/:planId/clone", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.post("/plans/:planId/clone", requirePermission("plan_builder:edit"), async (req, res, next) => {
     try {
         const parsed = clonePlanSchema.parse(req.body || {});
         const result = await clonePlan(req.params.planId, req.user.userId, {
@@ -138,7 +132,7 @@ planRoutes.get("/plans/:planId", async (req, res, next) => {
         next(error);
     }
 });
-planRoutes.put("/plans/:planId", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.put("/plans/:planId", requirePermission("plan_builder:edit"), async (req, res, next) => {
     try {
         const parsed = updatePlanSchema.parse(req.body || {});
         const planName = parsed.planName || parsed.plan_name;
@@ -153,9 +147,7 @@ planRoutes.put("/plans/:planId", requireRole(["admin", "planner"]), async (req, 
         // Persist plan context if any context fields are provided
         if (parsed.perf_start_date !== undefined ||
             parsed.perf_end_date !== undefined ||
-            parsed.qbc_clicks !== undefined ||
-            parsed.activity !== undefined ||
-            parsed.lead_type !== undefined) {
+            parsed.qbc_clicks !== undefined) {
             await upsertPlanContext(req.params.planId, req.user.userId, {
                 perfStartDate: parsed.perf_start_date ?? "",
                 perfEndDate: parsed.perf_end_date ?? "",
@@ -163,8 +155,6 @@ planRoutes.put("/plans/:planId", requireRole(["admin", "planner"]), async (req, 
                 priceEndDate: parsed.price_end_date ?? "",
                 qbcClicks: parsed.qbc_clicks ?? 0,
                 qbcLeadsCalls: parsed.qbc_leads_calls ?? 0,
-                activity: parsed.activity ?? "",
-                leadType: parsed.lead_type ?? ""
             });
         }
         appendChangeLog({ userId: req.user.userId, email: req.user.email }, { objectType: "plan", objectId: req.params.planId, action: "update", before: before ? { plan_name: before.plan_name, description: before.description } : undefined, after: { planName, description: parsed.description } }).catch(console.error);
@@ -174,7 +164,7 @@ planRoutes.put("/plans/:planId", requireRole(["admin", "planner"]), async (req, 
         next(error);
     }
 });
-planRoutes.delete("/plans/:planId", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.delete("/plans/:planId", requirePermission("plan_builder:edit"), async (req, res, next) => {
     try {
         const before = await getPlan(req.params.planId);
         await deletePlan(req.params.planId);
@@ -199,7 +189,7 @@ planRoutes.get("/plans/:planId/parameters", async (req, res, next) => {
         next(error);
     }
 });
-planRoutes.put("/plans/:planId/parameters", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.put("/plans/:planId/parameters", requirePermission("plan_builder:edit"), async (req, res, next) => {
     try {
         const parsed = parametersSchema.parse(req.body);
         const paramKeys = parsed.parameters.map((p) => p.key);
@@ -218,7 +208,7 @@ planRoutes.put("/plans/:planId/parameters", requireRole(["admin", "planner"]), a
         next(error);
     }
 });
-planRoutes.post("/plans/:planId/decisions", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.post("/plans/:planId/decisions", requirePermission("plan_builder:edit"), async (req, res, next) => {
     try {
         const parsed = decisionsSchema.parse(req.body);
         const result = await appendDecisions(req.params.planId, req.user.userId, parsed.decisions);
@@ -229,7 +219,7 @@ planRoutes.post("/plans/:planId/decisions", requireRole(["admin", "planner"]), a
         next(error);
     }
 });
-planRoutes.post("/plans/:planId/runs", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.post("/plans/:planId/runs", requirePermission("plan_builder:edit"), async (req, res, next) => {
     try {
         const result = await createRun(req.params.planId, req.user.userId);
         res.status(202).json({ ...result, status: "queued" });
@@ -261,7 +251,7 @@ planRoutes.get("/plans/:planId/runs/:runId/results", async (req, res, next) => {
     }
 });
 /* ── Plan Outcome — generate grouped outcome from PE recommended TPs ── */
-planRoutes.post("/plans/:planId/outcome/generate", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.post("/plans/:planId/outcome/generate", requirePermission("plan_builder:edit"), async (req, res, next) => {
     try {
         const planId = req.params.planId;
         const qbc = typeof req.body.qbc === "number" ? req.body.qbc : parseOptionalNumber(req.body.qbc);

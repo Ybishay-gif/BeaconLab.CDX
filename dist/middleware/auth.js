@@ -14,7 +14,10 @@ export async function requireUser(req, res, next) {
         req.user = {
             userId: user.userId,
             email: user.email,
-            role: user.role
+            role: user.role,
+            roleId: user.roleId,
+            roleName: user.roleName,
+            permissions: user.permissions,
         };
         next();
     }
@@ -22,6 +25,19 @@ export async function requireUser(req, res, next) {
         next(error);
     }
 }
+/** Check that the user has ALL of the specified permissions */
+export function requirePermission(...required) {
+    return (req, res, next) => {
+        const perms = req.user?.permissions ?? [];
+        const hasAll = required.every((p) => perms.includes(p));
+        if (!hasAll) {
+            res.status(403).json({ error: "Insufficient permissions" });
+            return;
+        }
+        next();
+    };
+}
+/** @deprecated Use requirePermission instead. Kept for backward compat during transition. */
 export function requireRole(allowed) {
     return (req, res, next) => {
         const role = req.user?.role;

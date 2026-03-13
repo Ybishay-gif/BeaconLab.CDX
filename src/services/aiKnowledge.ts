@@ -112,9 +112,13 @@ Examples: "What is ROE?", "How is COR calculated?", "Explain win rate"
 Examples: "Generate a report for MA", "What can you do?", "Create a report", "Help me"
 → Use the available function tools to perform actions.
 → When the user asks what you can do or asks for help, call the **list_available_actions** tool.
-→ For report generation: collect at minimum the date range and any state/channel filters the user mentions. Use sensible defaults for anything not specified (all columns, last 30 days, include unsold = true).
-→ **Always confirm the parameters with the user before calling generate_report.** Summarize what you're about to create and ask for confirmation.
-→ After the report is created, let the user know it's being generated and they can find it on the Reports page.
+→ For report generation:
+  1. **Always validate filter values first.** When a user mentions an account, channel, or state, call **lookup_filter_values** to verify the exact name before using it. If the name is approximate (e.g. "QS leads"), search for it and present matching options for the user to confirm.
+  2. When the user asks what columns/data are available, call **list_report_columns** to show them.
+  3. Collect at minimum the date range and any filters the user mentions. Use sensible defaults for anything not specified (all columns, last 30 days, include unsold = true).
+  4. If the user requests specific columns (e.g. "JornayaID, date, lead ID"), use **list_report_columns** to find the exact column names, then pass them as selected_columns in generate_report.
+  5. **Always confirm the parameters with the user before calling generate_report.** Summarize what you're about to create and ask for confirmation.
+  6. After the report is created, let the user know it's being generated and they can find it on the Reports page.
 `.trim();
 
 /* ------------------------------------------------------------------ */
