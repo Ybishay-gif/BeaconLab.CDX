@@ -195,6 +195,30 @@ async function runMigrations() {
       ALTER TABLE tickets ADD COLUMN IF NOT EXISTS test_results TEXT
     `);
 
+    // Reports table (custom report generator)
+    await pgExec(`
+      CREATE TABLE IF NOT EXISTS reports (
+        report_id        TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        report_name      TEXT NOT NULL,
+        user_id          TEXT NOT NULL,
+        date_start       DATE NOT NULL,
+        date_end         DATE NOT NULL,
+        fixed_filters    JSONB NOT NULL DEFAULT '{}',
+        dynamic_filters  JSONB NOT NULL DEFAULT '[]',
+        selected_columns JSONB NOT NULL DEFAULT '[]',
+        status           TEXT NOT NULL DEFAULT 'pending'
+                           CHECK (status IN ('pending','processing','done','error')),
+        file_url         TEXT,
+        row_count        INTEGER,
+        error_message    TEXT,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at     TIMESTAMPTZ
+      )
+    `);
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_reports_user ON reports(user_id, created_at DESC)");
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status)");
+
     console.log("Migrations OK");
   } catch (err) {
     console.warn("Migration warning (non-fatal):", err);

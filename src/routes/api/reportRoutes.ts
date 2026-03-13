@@ -1,0 +1,116 @@
+import { Router } from "express";
+import { z } from "zod";
+import {
+  listReports,
+  createReport,
+  getReport,
+  getDownloadUrl,
+  deleteReport,
+  getTableSchema,
+  getFilterValues,
+} from "../../services/reportService.js";
+
+const createReportSchema = z.object({
+  reportName: z.string().min(1).max(200),
+  dateStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  dateEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  fixedFilters: z
+    .object({
+      account_name: z.array(z.string()).optional(),
+      campaign_name: z.array(z.string()).optional(),
+      attribution_channel: z.array(z.string()).optional(),
+      data_state: z.array(z.string()).optional(),
+      transaction_sold: z.enum(["0", "1", "all"]).optional(),
+    })
+    .default({}),
+  dynamicFilters: z
+    .array(
+      z.object({
+        column: z.string(),
+        operator: z.enum(["=", "!=", ">", "<", ">=", "<=", "BETWEEN", "LIKE", "IN"]),
+        value: z.union([z.string(), z.number(), z.array(z.union([z.string(), z.number()]))]),
+      })
+    )
+    .default([]),
+  selectedColumns: z.array(z.string()).min(1),
+});
+
+export const reportRoutes = Router();
+
+// Static routes FIRST (before :id param routes)
+
+reportRoutes.get("/reports/schema", async (_req, res, next) => {
+  try {
+    const columns = await getTableSchema();
+    res.json({ columns });
+  } catch (error) {
+    next(error);
+  }
+});
+
+reportRoutes.get("/reports/filter-values/:column", async (req, res, next) => {
+  try {
+    const values = await getFilterValues(req.params.column);
+    res.json({ values });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// List reports
+reportRoutes.get("/reports", async (req, res, next) => {
+  try {
+    const reports = await listReports(req.user!.userId);
+    res.json({ reports });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Create report
+reportRoutes.post("/reports", async (req, res, next) => {
+  try {
+    const parsed = createReportSchema.parse(req.body);
+    const result = await createReport(req.user!.userId, parsed);
+    res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get single report
+reportRoutes.get("/reports/:id", async (req, res, next) => {
+  try {
+    const report = await getReport(req.params.id);
+    if (!report) return res.status(404).json({ error: "Report not found" });
+    res.json({ report });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Download report
+reportRoutes.get("/reports/:id/download", async (req, res, next) => {
+  try {
+    const url = await getDownloadUrl(req.params.id);
+    if (!url) return res.status(404).json({ error: "Report not ready or not found" });
+    res.redirect(url);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Delete report
+reportRoutes.delete("/reports/:id", async (req, res, next) => {
+  try {
+    const report = await getReport(req.params.id);
+    if (!report) return res.status(404).json({ error: "Report not found" });
+    if (report.user_id !== req.user!.userId && req.user!.role !== "admin") {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+    await deleteReport(req.params.id);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});

@@ -12,6 +12,7 @@ import { usageRoutes } from "./api/usageRoutes.js";
 import { chatRoutes } from "./api/chatRoutes.js";
 import { aiChatRoutes } from "./api/aiChatRoutes.js";
 import { ticketsRoutes } from "./api/ticketsRoutes.js";
+import { reportRoutes } from "./api/reportRoutes.js";
 
 export const plansRouter = Router();
 
@@ -31,3 +32,4 @@ plansRouter.use(usageRoutes);
 plansRouter.use(chatRoutes);
 plansRouter.use(aiChatRoutes);
 plansRouter.use(ticketsRoutes);
+plansRouter.use(reportRoutes);

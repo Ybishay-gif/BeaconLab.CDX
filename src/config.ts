@@ -22,6 +22,9 @@ export const config = {
   rawCrossTacticTable:
     process.env.BQ_RAW_CROSS_TACTIC_TABLE || "`crblx-beacon-prod.Custom_Reports.Cross Tactic Analysis Full Data `",
 
+  // Reports
+  reportsBucket: process.env.REPORTS_GCS_BUCKET || "beacon-lab-reports",
+
   // PostgreSQL — runtime DB (BQ kept only for daily sync)
   usePg: process.env.USE_PG === "true",
   cloudSqlConnectionName: process.env.CLOUD_SQL_CONNECTION_NAME || "",
