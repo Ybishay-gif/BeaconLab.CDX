@@ -181,12 +181,11 @@ async function runMigrations() {
 
     // Shadow-mode migration: PE computed daily (full PE CTE output from BQ)
     await pgExec(`
-      DROP TABLE IF EXISTS pe_computed_daily;
-      CREATE TABLE pe_computed_daily (
+      CREATE TABLE IF NOT EXISTS pe_computed_daily (
         activity_lead_type         TEXT NOT NULL DEFAULT '',
         channel_group_name         TEXT,
         state                      TEXT,
-        testing_point              DOUBLE PRECISION,
+        testing_point              INTEGER,
         opps                       DOUBLE PRECISION,
         bids                       DOUBLE PRECISION,
         win_rate                   DOUBLE PRECISION,
@@ -216,10 +215,20 @@ async function runMigrations() {
         performance                DOUBLE PRECISION,
         roe                        DOUBLE PRECISION,
         combined_ratio             DOUBLE PRECISION,
-        recommended_testing_point  DOUBLE PRECISION,
+        recommended_testing_point  INTEGER,
         stat_sig                   TEXT,
         stat_sig_channel_group     TEXT,
         stat_sig_source            TEXT,
+        scf_avg_profit             DOUBLE PRECISION,
+        scf_avg_equity             DOUBLE PRECISION,
+        scf_avg_lifetime_premium   DOUBLE PRECISION,
+        scf_avg_lifetime_cost      DOUBLE PRECISION,
+        ssd_binds                  DOUBLE PRECISION,
+        ssd_quotes                 DOUBLE PRECISION,
+        ssd_q2b                    DOUBLE PRECISION,
+        ssd_performance            DOUBLE PRECISION,
+        ssd_roe                    DOUBLE PRECISION,
+        ssd_combined_ratio         DOUBLE PRECISION,
         refreshed_at               TIMESTAMPTZ DEFAULT NOW()
       )
     `);
