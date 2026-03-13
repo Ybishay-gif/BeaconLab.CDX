@@ -122,6 +122,27 @@ CREATE INDEX idx_targets_plan ON targets(plan_id);
 CREATE INDEX idx_targets_state_seg ON targets(state, segment);
 CREATE INDEX IF NOT EXISTS idx_targets_plan_alt ON targets(plan_id, activity_lead_type);
 
+-- Roles & Permissions
+CREATE TABLE IF NOT EXISTS roles (
+  role_id    TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  name       TEXT NOT NULL UNIQUE,
+  is_system  BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+  role_id        TEXT NOT NULL REFERENCES roles(role_id) ON DELETE CASCADE,
+  permission_key TEXT NOT NULL,
+  PRIMARY KEY (role_id, permission_key)
+);
+CREATE INDEX IF NOT EXISTS idx_role_permissions_key ON role_permissions(permission_key);
+
+-- Add role_id FK to users
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role_id TEXT REFERENCES roles(role_id);
+-- Add role_id to auth_sessions
+ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS role_id TEXT;
+
 -- Module access per user (join table)
 CREATE TABLE IF NOT EXISTS user_modules (
   user_id   TEXT NOT NULL REFERENCES users(user_id),

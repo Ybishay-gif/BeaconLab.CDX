@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { requireRole } from "../../middleware/auth.js";
+import { requirePermission } from "../../middleware/auth.js";
 import {
   appendDecisions,
   clonePlan,
@@ -110,7 +110,7 @@ planRoutes.get("/plans", async (_req, res, next) => {
   }
 });
 
-planRoutes.post("/plans", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.post("/plans", requirePermission("plan_builder:edit"), async (req, res, next) => {
   try {
     const parsed = createPlanSchema.parse(req.body);
     const planName = (parsed.planName || parsed.plan_name)!;
@@ -145,7 +145,7 @@ planRoutes.post("/plans", requireRole(["admin", "planner"]), async (req, res, ne
   }
 });
 
-planRoutes.post("/plans/:planId/clone", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.post("/plans/:planId/clone", requirePermission("plan_builder:edit"), async (req, res, next) => {
   try {
     const parsed = clonePlanSchema.parse(req.body || {});
     const result = await clonePlan(req.params.planId, req.user!.userId, {
@@ -175,7 +175,7 @@ planRoutes.get("/plans/:planId", async (req, res, next) => {
   }
 });
 
-planRoutes.put("/plans/:planId", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.put("/plans/:planId", requirePermission("plan_builder:edit"), async (req, res, next) => {
   try {
     const parsed = updatePlanSchema.parse(req.body || {});
     const planName = parsed.planName || parsed.plan_name;
@@ -220,7 +220,7 @@ planRoutes.put("/plans/:planId", requireRole(["admin", "planner"]), async (req, 
   }
 });
 
-planRoutes.delete("/plans/:planId", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.delete("/plans/:planId", requirePermission("plan_builder:edit"), async (req, res, next) => {
   try {
     const before = await getPlan(req.params.planId);
     await deletePlan(req.params.planId);
@@ -248,7 +248,7 @@ planRoutes.get("/plans/:planId/parameters", async (req, res, next) => {
   }
 });
 
-planRoutes.put("/plans/:planId/parameters", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.put("/plans/:planId/parameters", requirePermission("plan_builder:edit"), async (req, res, next) => {
   try {
     const parsed = parametersSchema.parse(req.body);
     const paramKeys = parsed.parameters.map((p) => p.key);
@@ -268,7 +268,7 @@ planRoutes.put("/plans/:planId/parameters", requireRole(["admin", "planner"]), a
   }
 });
 
-planRoutes.post("/plans/:planId/decisions", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.post("/plans/:planId/decisions", requirePermission("plan_builder:edit"), async (req, res, next) => {
   try {
     const parsed = decisionsSchema.parse(req.body);
     const result = await appendDecisions(req.params.planId, req.user!.userId, parsed.decisions);
@@ -282,7 +282,7 @@ planRoutes.post("/plans/:planId/decisions", requireRole(["admin", "planner"]), a
   }
 });
 
-planRoutes.post("/plans/:planId/runs", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.post("/plans/:planId/runs", requirePermission("plan_builder:edit"), async (req, res, next) => {
   try {
     const result = await createRun(req.params.planId, req.user!.userId);
     res.status(202).json({ ...result, status: "queued" });
@@ -316,7 +316,7 @@ planRoutes.get("/plans/:planId/runs/:runId/results", async (req, res, next) => {
 
 /* ── Plan Outcome — generate grouped outcome from PE recommended TPs ── */
 
-planRoutes.post("/plans/:planId/outcome/generate", requireRole(["admin", "planner"]), async (req, res, next) => {
+planRoutes.post("/plans/:planId/outcome/generate", requirePermission("plan_builder:edit"), async (req, res, next) => {
   try {
     const planId = req.params.planId;
     const qbc = typeof req.body.qbc === "number" ? req.body.qbc : parseOptionalNumber(req.body.qbc);

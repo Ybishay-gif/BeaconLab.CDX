@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
-import { requireRole } from "../../middleware/auth.js";
+import { requirePermission } from "../../middleware/auth.js";
 import { createTarget, getTarget, getTargetsMetrics, listTargets, updateTarget, batchCreateTargets } from "../../services/targetsService.js";
 import { appendChangeLog } from "../../services/changeLogService.js";
 import { getDefaultTargets, VALID_TARGET_KEYS } from "../../services/defaultTargetsService.js";
@@ -136,7 +136,7 @@ targetsRoutes.get("/targets", timedRoute("list_targets", async (req, res, next) 
   }
 }));
 
-targetsRoutes.post("/targets", requireRole(["admin", "planner"]), async (req, res, next) => {
+targetsRoutes.post("/targets", requirePermission("targets:edit"), async (req, res, next) => {
   try {
     const planId = parsePlanId(req.query);
     const alt = parseActivityLeadType(req.query);
@@ -151,7 +151,7 @@ targetsRoutes.post("/targets", requireRole(["admin", "planner"]), async (req, re
   }
 });
 
-targetsRoutes.put("/targets/:targetId", requireRole(["admin", "planner"]), async (req, res, next) => {
+targetsRoutes.put("/targets/:targetId", requirePermission("targets:edit"), async (req, res, next) => {
   try {
     const parsed = updateTargetSchema.parse(req.body);
     const before = await getTarget(req.params.targetId);
@@ -198,7 +198,7 @@ targetsRoutes.post("/targets/metrics", timedRoute("targets_metrics", async (req,
 }));
 
 /* POST /targets/populate-defaults — copy default targets into plan's targets */
-targetsRoutes.post("/targets/populate-defaults", requireRole(["admin", "planner"]), async (req, res, next) => {
+targetsRoutes.post("/targets/populate-defaults", requirePermission("targets:edit"), async (req, res, next) => {
   try {
     const { planId, defaultTargetKey, activityLeadType } = populateDefaultsSchema.parse(req.body);
     const alt = activityLeadType || defaultTargetKey;

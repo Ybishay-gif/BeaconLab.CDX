@@ -2,11 +2,14 @@ import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypt
 import { config } from "../config.js";
 import { query, table } from "../db/index.js";
 import { VALID_MODULE_IDS, isValidModuleId } from "../modules.js";
+import { getRolePermissions, getRoleByName } from "./roleService.js";
+import { ALL_PERMISSIONS_LIST } from "../permissions.js";
 
 type UserRecord = {
   user_id: string;
   email: string;
-  role: "admin" | "planner" | "viewer";
+  role: string;
+  role_id: string | null;
   is_active: boolean;
 };
 
@@ -22,20 +25,26 @@ type SessionRecord = {
   session_token: string;
   user_id: string;
   email: string;
-  role: "admin" | "planner" | "viewer";
+  role: string;
+  role_id: string | null;
 };
 
 export type SessionUser = {
   userId: string;
   email: string;
-  role: "admin" | "planner" | "viewer";
+  role: string;
+  roleId: string;
+  roleName: string;
+  permissions: string[];
 };
 
 type ManagedUserRow = {
   user_id: string;
   email: string;
   name: string | null;
-  role: "admin" | "planner" | "viewer";
+  role: string;
+  role_id: string | null;
+  role_name: string | null;
   active: boolean;
   last_login: string | null;
   created_at: string;
@@ -136,9 +145,10 @@ async function ensureAuthTablesExist(): Promise<void> {
 }
 
 async function getUserByEmail(email: string): Promise<UserRecord | null> {
+  const roleIdCol = config.usePg ? "role_id," : "";
   const rows = await query<UserRecord>(
     `
-      SELECT user_id, email, role, is_active
+      SELECT user_id, email, role, ${roleIdCol} is_active
       FROM ${table("users")}
       WHERE LOWER(email) = @email
       LIMIT 1
@@ -167,12 +177,35 @@ async function getCredentialsByUserId(userId: string): Promise<UserCredentialRec
   return rows[0] || null;
 }
 
+/** Resolve role_id -> permissions. For BQ mode or missing role_id, falls back based on role text. */
+async function resolvePermissions(roleId: string | null, roleFallback: string): Promise<{ roleId: string; roleName: string; permissions: string[] }> {
+  if (config.usePg && roleId) {
+    const perms = await getRolePermissions(roleId);
+    const rows = await query<{ name: string }>(
+      `SELECT name FROM ${table("roles")} WHERE role_id = @roleId`,
+      { roleId }
+    );
+    const roleName = rows[0]?.name ?? roleFallback;
+    return { roleId, roleName, permissions: perms };
+  }
+
+  // BQ fallback or no role_id: admin gets all, others get nothing
+  if (roleFallback === "admin") {
+    return { roleId: roleId ?? "admin", roleName: "Admin", permissions: [...ALL_PERMISSIONS_LIST] };
+  }
+  return { roleId: roleId ?? "", roleName: roleFallback, permissions: [] };
+}
+
 async function createSession(user: SessionUser): Promise<{ token: string; user: SessionUser }> {
   const token = randomBytes(32).toString("hex");
   const expiresExpr = config.usePg
     ? "NOW() + INTERVAL '14 days'"
     : "TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)";
   const now = config.usePg ? "NOW()" : "CURRENT_TIMESTAMP()";
+
+  const roleIdCol = config.usePg ? "role_id," : "";
+  const roleIdVal = config.usePg ? "@roleId," : "";
+
   await withSerializableRetry(() =>
     query(
       `
@@ -181,6 +214,7 @@ async function createSession(user: SessionUser): Promise<{ token: string; user: 
           user_id,
           email,
           role,
+          ${roleIdCol}
           expires_at,
           created_at,
           last_seen_at
@@ -190,6 +224,7 @@ async function createSession(user: SessionUser): Promise<{ token: string; user: 
           @userId,
           @email,
           @role,
+          ${roleIdVal}
           ${expiresExpr},
           ${now},
           ${now}
@@ -199,7 +234,8 @@ async function createSession(user: SessionUser): Promise<{ token: string; user: 
         token,
         userId: user.userId,
         email: user.email,
-        role: user.role
+        role: user.role,
+        roleId: user.roleId,
       }
     )
   );
@@ -279,10 +315,14 @@ export async function setupUserPassword(
     );
   }
 
+  const resolved = await resolvePermissions(user.role_id, user.role);
   return createSession({
     userId: user.user_id,
     email: user.email,
-    role: user.role
+    role: user.role,
+    roleId: resolved.roleId,
+    roleName: resolved.roleName,
+    permissions: resolved.permissions,
   });
 }
 
@@ -317,10 +357,14 @@ export async function loginUser(email: string, password: string): Promise<{ toke
     { userId: user.user_id }
   );
 
+  const resolved = await resolvePermissions(user.role_id, user.role);
   return createSession({
     userId: user.user_id,
     email: user.email,
-    role: user.role
+    role: user.role,
+    roleId: resolved.roleId,
+    roleName: resolved.roleName,
+    permissions: resolved.permissions,
   });
 }
 
@@ -329,10 +373,25 @@ export async function loginAdminWithCode(code: string): Promise<{ token: string;
   if (String(code || "").trim() !== config.adminAccessCode) {
     fail(401, "Invalid admin access code.");
   }
+
+  // Resolve the Admin system role
+  let roleId = "admin-code";
+  let permissions = [...ALL_PERMISSIONS_LIST];
+  if (config.usePg) {
+    const adminRole = await getRoleByName("Admin");
+    if (adminRole) {
+      roleId = adminRole.role_id;
+      permissions = await getRolePermissions(adminRole.role_id);
+    }
+  }
+
   return createSession({
     userId: "admin-code",
     email: "admin@local",
-    role: "admin"
+    role: "admin",
+    roleId,
+    roleName: "Admin",
+    permissions,
   });
 }
 
@@ -348,9 +407,10 @@ export async function validateSessionToken(token: string): Promise<SessionUser |
   }
 
   await ensureAuthTablesExist();
+  const roleIdSelect = config.usePg ? ", role_id" : "";
   const rows = await query<SessionRecord>(
     `
-      SELECT session_token, user_id, email, role
+      SELECT session_token, user_id, email, role${roleIdSelect}
       FROM ${table("auth_sessions")}
       WHERE session_token = @token
         AND expires_at > CURRENT_TIMESTAMP()
@@ -377,10 +437,14 @@ export async function validateSessionToken(token: string): Promise<SessionUser |
     )
   ).catch(() => undefined);
 
+  const resolved = await resolvePermissions(session.role_id, session.role);
   const user: SessionUser = {
     userId: session.user_id,
     email: session.email,
-    role: session.role
+    role: session.role,
+    roleId: resolved.roleId,
+    roleName: resolved.roleName,
+    permissions: resolved.permissions,
   };
 
   sessionCache.set(token, { user, expiresAt: Date.now() + SESSION_CACHE_TTL_MS });
@@ -431,7 +495,6 @@ export async function listManagedUsers(): Promise<ManagedUserRow[]> {
   const castCreated = config.usePg ? "u.created_at::text" : "CAST(u.created_at AS STRING)";
 
   if (config.usePg) {
-    // PG: use array_agg to include modules in a single query
     type RawRow = Omit<ManagedUserRow, "modules"> & { modules: string[] | null };
     const rows = await query<RawRow>(
       `
@@ -440,6 +503,8 @@ export async function listManagedUsers(): Promise<ManagedUserRow[]> {
           u.email,
           u.name,
           u.role,
+          u.role_id,
+          r.name AS role_name,
           u.is_active AS active,
           ${castLogin} AS last_login,
           ${castCreated} AS created_at,
@@ -449,7 +514,9 @@ export async function listManagedUsers(): Promise<ManagedUserRow[]> {
           ON c.user_id = u.user_id
         LEFT JOIN ${table("user_modules")} AS m
           ON m.user_id = u.user_id
-        GROUP BY u.user_id, u.email, u.name, u.role, u.is_active, c.last_login_at, u.created_at
+        LEFT JOIN ${table("roles")} AS r
+          ON r.role_id = u.role_id
+        GROUP BY u.user_id, u.email, u.name, u.role, u.role_id, r.name, u.is_active, c.last_login_at, u.created_at
         ORDER BY LOWER(u.email)
       `
     );
@@ -457,7 +524,7 @@ export async function listManagedUsers(): Promise<ManagedUserRow[]> {
   }
 
   // BQ fallback: no module table, grant all modules
-  const rows = await query<Omit<ManagedUserRow, "modules">>(
+  const rows = await query<Omit<ManagedUserRow, "modules" | "role_id" | "role_name">>(
     `
       SELECT
         u.user_id,
@@ -473,12 +540,12 @@ export async function listManagedUsers(): Promise<ManagedUserRow[]> {
       ORDER BY LOWER(u.email)
     `
   );
-  return rows.map((r) => ({ ...r, modules: VALID_MODULE_IDS }));
+  return rows.map((r) => ({ ...r, role_id: null, role_name: null, modules: VALID_MODULE_IDS }));
 }
 
 export async function addManagedUser(
   email: string,
-  opts?: { name?: string; role?: string }
+  opts?: { name?: string; role?: string; roleId?: string }
 ): Promise<{ userId: string; email: string }> {
   await ensureAuthTablesExist();
   const normalizedEmail = normalizeEmail(email);
@@ -487,33 +554,50 @@ export async function addManagedUser(
   }
 
   const name = opts?.name?.trim() || null;
-  const role = opts?.role === "admin" ? "admin" : "planner";
+
+  // Determine role_id: prefer explicit roleId, otherwise resolve from role name
+  let roleId: string | null = opts?.roleId ?? null;
+  let roleText = opts?.role ?? "planner";
+
+  if (!roleId && config.usePg) {
+    const roleName = roleText === "admin" ? "Admin" : roleText === "viewer" ? "Viewer" : "Planner";
+    const role = await getRoleByName(roleName);
+    roleId = role?.role_id ?? null;
+    roleText = role?.name?.toLowerCase() ?? roleText;
+  }
 
   const existing = await getUserByEmail(normalizedEmail);
   const userId = existing?.user_id || randomUUID();
   if (!existing) {
+    if (config.usePg) {
+      await query(
+        `
+          INSERT INTO ${table("users")} (
+            user_id, email, name, role, role_id, is_active, created_at, updated_at
+          )
+          VALUES (
+            @userId, @email, @name, @role, @roleId, TRUE, NOW(), NOW()
+          )
+        `,
+        { userId, email: normalizedEmail, name, role: roleText, roleId }
+      );
+    } else {
+      await query(
+        `
+          INSERT INTO ${table("users")} (
+            user_id, email, name, role, is_active, created_at, updated_at
+          )
+          VALUES (
+            @userId, @email, @name, @role, TRUE, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+          )
+        `,
+        { userId, email: normalizedEmail, name, role: roleText }
+      );
+    }
+  } else if (config.usePg && roleId) {
     await query(
-      `
-        INSERT INTO ${table("users")} (
-          user_id,
-          email,
-          name,
-          role,
-          is_active,
-          created_at,
-          updated_at
-        )
-        VALUES (
-          @userId,
-          @email,
-          @name,
-          @role,
-          TRUE,
-          CURRENT_TIMESTAMP(),
-          CURRENT_TIMESTAMP()
-        )
-      `,
-      { userId, email: normalizedEmail, name, role }
+      `UPDATE ${table("users")} SET role = @role, role_id = @roleId, updated_at = NOW() WHERE user_id = @userId`,
+      { role: roleText, roleId, userId }
     );
   }
 
@@ -560,6 +644,28 @@ export async function addManagedUser(
   }
 
   return { userId, email: normalizedEmail };
+}
+
+export async function updateUserRole(userId: string, roleId: string): Promise<void> {
+  if (!config.usePg) fail(400, "Role management requires PostgreSQL mode.");
+
+  const rows = await query<{ name: string }>(
+    `SELECT name FROM ${table("roles")} WHERE role_id = @roleId`,
+    { roleId }
+  );
+  if (rows.length === 0) fail(404, "Role not found.");
+
+  await query(
+    `UPDATE ${table("users")} SET role = LOWER(@roleName), role_id = @roleId, updated_at = NOW() WHERE user_id = @userId`,
+    { roleName: rows[0].name, roleId, userId }
+  );
+
+  // Invalidate cached sessions for this user so they pick up new permissions
+  for (const [token, cached] of sessionCache.entries()) {
+    if (cached.user.userId === userId) {
+      sessionCache.delete(token);
+    }
+  }
 }
 
 export async function resetManagedUserPassword(userId: string): Promise<void> {

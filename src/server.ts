@@ -7,6 +7,7 @@ import { ZodError } from "zod";
 import { config } from "./config.js";
 import { healthRouter } from "./routes/health.js";
 import { plansRouter } from "./routes/plans.js";
+import { ALL_PERMISSIONS, DEFAULT_ROLE_PERMISSIONS } from "./permissions.js";
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
@@ -218,6 +219,72 @@ async function runMigrations() {
     `);
     await pgExec("CREATE INDEX IF NOT EXISTS idx_reports_user ON reports(user_id, created_at DESC)");
     await pgExec("CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status)");
+
+    // ── Roles & Permissions ────────────────────────────────────────
+    await pgExec(`
+      CREATE TABLE IF NOT EXISTS roles (
+        role_id    TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        name       TEXT NOT NULL UNIQUE,
+        is_system  BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pgExec(`
+      CREATE TABLE IF NOT EXISTS role_permissions (
+        role_id        TEXT NOT NULL REFERENCES roles(role_id) ON DELETE CASCADE,
+        permission_key TEXT NOT NULL,
+        PRIMARY KEY (role_id, permission_key)
+      )
+    `);
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_role_permissions_key ON role_permissions(permission_key)");
+
+    // Add role_id FK to users and auth_sessions
+    await pgExec("ALTER TABLE users ADD COLUMN IF NOT EXISTS role_id TEXT REFERENCES roles(role_id)");
+    await pgExec("ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS role_id TEXT");
+
+    // Seed system roles (idempotent) — uses query() from db layer for SELECT/INSERT RETURNING
+    const { query: dbQuery } = await import("./db/index.js");
+    for (const [roleName, permissions] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
+      const rows = await dbQuery<{ role_id: string }>(
+        `SELECT role_id FROM roles WHERE name = @roleName`,
+        { roleName }
+      );
+      let roleId: string;
+      if (rows.length === 0) {
+        const inserted = await dbQuery<{ role_id: string }>(
+          `INSERT INTO roles (name, is_system) VALUES (@roleName, TRUE) RETURNING role_id`,
+          { roleName }
+        );
+        roleId = inserted[0].role_id;
+      } else {
+        roleId = rows[0].role_id;
+      }
+      // Sync permissions for this role
+      await pgExec(`DELETE FROM role_permissions WHERE role_id = '${roleId}'`);
+      for (const perm of permissions) {
+        await dbQuery(
+          `INSERT INTO role_permissions (role_id, permission_key) VALUES (@roleId, @perm) ON CONFLICT DO NOTHING`,
+          { roleId, perm }
+        );
+      }
+    }
+
+    // Backfill: assign role_id to existing users based on role text column
+    await pgExec(`
+      UPDATE users SET role_id = (
+        SELECT role_id FROM roles WHERE LOWER(roles.name) = LOWER(users.role)
+      )
+      WHERE role_id IS NULL AND role IS NOT NULL
+    `);
+
+    // Backfill: assign role_id to existing sessions based on role text column
+    await pgExec(`
+      UPDATE auth_sessions SET role_id = (
+        SELECT role_id FROM roles WHERE LOWER(roles.name) = LOWER(auth_sessions.role)
+      )
+      WHERE role_id IS NULL AND role IS NOT NULL
+    `);
 
     console.log("Migrations OK");
   } catch (err) {

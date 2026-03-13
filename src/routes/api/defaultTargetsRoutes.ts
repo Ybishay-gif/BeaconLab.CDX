@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { requireRole } from "../../middleware/auth.js";
+import { requirePermission } from "../../middleware/auth.js";
 import {
   VALID_TARGET_KEYS,
   getDefaultTargetsSummary,
@@ -60,7 +60,7 @@ defaultTargetsRoutes.get("/default-targets/:key", async (req, res, next) => {
 /* PUT /default-targets/:key — replace rows (admin/planner) */
 defaultTargetsRoutes.put(
   "/default-targets/:key",
-  requireRole(["admin", "planner"]),
+  requirePermission("default_targets:edit"),
   async (req, res, next) => {
     try {
       const key = keySchema.parse(req.params.key);
@@ -131,7 +131,7 @@ defaultTargetsRoutes.get("/default-targets/:key/perf", async (req, res, next) =>
 /* PUT /default-targets/:key/:id — update single row value (admin/planner) */
 defaultTargetsRoutes.put(
   "/default-targets/:key/:id",
-  requireRole(["admin", "planner"]),
+  requirePermission("default_targets:edit"),
   async (req, res, next) => {
     try {
       const key = keySchema.parse(req.params.key);
@@ -156,7 +156,7 @@ defaultTargetsRoutes.put(
 /* DELETE /default-targets/:key — clear rows (admin/planner) */
 defaultTargetsRoutes.delete(
   "/default-targets/:key",
-  requireRole(["admin", "planner"]),
+  requirePermission("default_targets:edit"),
   async (req, res, next) => {
     try {
       const key = keySchema.parse(req.params.key);

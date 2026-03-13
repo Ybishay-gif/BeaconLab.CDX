@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { requireRole } from "../../middleware/auth.js";
+import { requirePermission } from "../../middleware/auth.js";
 import {
   getChannelParamFilters,
   getChannelParams,
@@ -92,7 +92,7 @@ channelParamRoutes.get("/channel-params", async (req, res, next) => {
 /* PUT /channel-params — save (admin/planner only) */
 channelParamRoutes.put(
   "/channel-params",
-  requireRole(["admin", "planner"]),
+  requirePermission("channel_recommendations:edit"),
   async (req, res, next) => {
     try {
       const { tactic, vertical, segment, values } = saveSchema.parse(req.body);

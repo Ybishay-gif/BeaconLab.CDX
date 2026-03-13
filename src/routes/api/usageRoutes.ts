@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { requireRole } from "../../middleware/auth.js";
+import { requirePermission } from "../../middleware/auth.js";
 import { recordUsageEvents, queryUsageEvents } from "../../services/usageService.js";
 
 const eventSchema = z.object({
@@ -34,7 +34,7 @@ usageRoutes.post("/usage/track", async (req, res, next) => {
 });
 
 // GET /api/usage/events — admin-only query endpoint
-usageRoutes.get("/usage/events", requireRole(["admin"]), async (req, res, next) => {
+usageRoutes.get("/usage/events", requirePermission("usage_analytics:view"), async (req, res, next) => {
   try {
     const result = await queryUsageEvents({
       startDate: typeof req.query.startDate === "string" ? req.query.startDate : undefined,

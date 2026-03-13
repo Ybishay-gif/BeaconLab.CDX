@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { requireRole } from "../../middleware/auth.js";
+import { requirePermission } from "../../middleware/auth.js";
 import {
   createTicket,
   listTickets,
@@ -68,7 +68,7 @@ ticketsRoutes.get("/tickets/:ticketId", async (req, res, next) => {
 });
 
 // Create ticket
-ticketsRoutes.post("/tickets", async (req, res, next) => {
+ticketsRoutes.post("/tickets", requirePermission("tickets:add"), async (req, res, next) => {
   try {
     const parsed = createTicketSchema.parse(req.body);
     const result = await createTicket(
@@ -88,7 +88,16 @@ ticketsRoutes.put("/tickets/:ticketId", async (req, res, next) => {
     const ticket = await getTicket(req.params.ticketId);
     if (!ticket) return res.status(404).json({ error: "Ticket not found" });
 
-    if (req.user!.role !== "admin" && ticket.created_by !== req.user!.userId) {
+    // Check permission based on status change
+    const perms = req.user!.permissions ?? [];
+    if (parsed.status === "approved" && !perms.includes("tickets:approve")) {
+      return res.status(403).json({ error: "Insufficient permissions to approve tickets" });
+    }
+    if (parsed.status === "deploy_approved" && !perms.includes("tickets:deploy_approve")) {
+      return res.status(403).json({ error: "Insufficient permissions to mark tickets as deploy approved" });
+    }
+    // Allow owner or anyone with tickets:approve to update other fields
+    if (ticket.created_by !== req.user!.userId && !perms.includes("tickets:approve")) {
       return res.status(403).json({ error: "Not authorized to update this ticket" });
     }
 
@@ -100,7 +109,7 @@ ticketsRoutes.put("/tickets/:ticketId", async (req, res, next) => {
 });
 
 // Delete ticket (admin only)
-ticketsRoutes.delete("/tickets/:ticketId", requireRole(["admin"]), async (req, res, next) => {
+ticketsRoutes.delete("/tickets/:ticketId", requirePermission("tickets:approve"), async (req, res, next) => {
   try {
     await deleteTicket(req.params.ticketId);
     res.json({ ok: true });

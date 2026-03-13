@@ -7,7 +7,10 @@ declare global {
       user?: {
         userId: string;
         email: string;
-        role: "admin" | "planner" | "viewer";
+        role: string;
+        roleId: string;
+        roleName: string;
+        permissions: string[];
       };
     }
   }
@@ -30,7 +33,10 @@ export async function requireUser(req: Request, res: Response, next: NextFunctio
     req.user = {
       userId: user.userId,
       email: user.email,
-      role: user.role
+      role: user.role,
+      roleId: user.roleId,
+      roleName: user.roleName,
+      permissions: user.permissions,
     };
 
     next();
@@ -39,14 +45,27 @@ export async function requireUser(req: Request, res: Response, next: NextFunctio
   }
 }
 
-export function requireRole(allowed: Array<"admin" | "planner" | "viewer">) {
+/** Check that the user has ALL of the specified permissions */
+export function requirePermission(...required: string[]) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const perms = req.user?.permissions ?? [];
+    const hasAll = required.every((p) => perms.includes(p));
+    if (!hasAll) {
+      res.status(403).json({ error: "Insufficient permissions" });
+      return;
+    }
+    next();
+  };
+}
+
+/** @deprecated Use requirePermission instead. Kept for backward compat during transition. */
+export function requireRole(allowed: string[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const role = req.user?.role;
     if (!role || !allowed.includes(role)) {
       res.status(403).json({ error: "Insufficient permissions" });
       return;
     }
-
     next();
   };
 }
