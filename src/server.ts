@@ -203,18 +203,23 @@ async function runMigrations() {
     `);
 
     // v3: Spec-driven workflow statuses + new columns + activity/comments tables
+    // First drop old constraint and migrate rows, then add new constraint
     await pgExec(`
       DO $$ BEGIN
         ALTER TABLE tickets DROP CONSTRAINT IF EXISTS tickets_status_check;
+      EXCEPTION WHEN others THEN NULL;
+      END $$
+    `);
+    await pgExec("UPDATE tickets SET status = 'pending_spec' WHERE status = 'approved'");
+    await pgExec("UPDATE tickets SET status = 'pending_deployment' WHERE status IN ('coded', 'pending_review')");
+    await pgExec("UPDATE tickets SET status = 'deployment_approved' WHERE status = 'deploy_approved'");
+    await pgExec(`
+      DO $$ BEGIN
         ALTER TABLE tickets ADD CONSTRAINT tickets_status_check
           CHECK (status IN (
             'todo','pending_spec','pending_spec_approval','spec_approved',
             'adjusted_spec','pending_deployment','deployment_approved','deployed'
           ));
-        -- Migrate old statuses to new equivalents
-        UPDATE tickets SET status = 'pending_spec' WHERE status = 'approved';
-        UPDATE tickets SET status = 'pending_deployment' WHERE status IN ('coded', 'pending_review');
-        UPDATE tickets SET status = 'deployment_approved' WHERE status = 'deploy_approved';
       EXCEPTION WHEN others THEN NULL;
       END $$
     `);
