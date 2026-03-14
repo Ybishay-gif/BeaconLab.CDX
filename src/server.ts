@@ -195,6 +195,9 @@ async function runMigrations() {
     await pgExec(`
       ALTER TABLE tickets ADD COLUMN IF NOT EXISTS test_results TEXT
     `);
+    await pgExec(`
+      ALTER TABLE tickets ADD COLUMN IF NOT EXISTS documentation JSONB DEFAULT '[]'
+    `);
 
     // Reports table (custom report generator)
     await pgExec(`

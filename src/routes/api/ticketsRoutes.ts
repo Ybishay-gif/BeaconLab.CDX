@@ -30,7 +30,8 @@ const createTicketSchema = z.object({
 const updateTicketSchema = z.object({
   status: z.enum(["todo", "approved", "coded", "pending_review", "deploy_approved", "deployed"]).optional(),
   resolution_notes: z.string().max(2000).optional(),
-  test_results: z.string().max(10000).optional(),
+  test_results: z.string().max(50000).optional(),
+  documentation: z.array(attachmentSchema).max(10).optional(),
   assigned_to: z.string().nullable().optional(),
 });
 

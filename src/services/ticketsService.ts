@@ -19,6 +19,7 @@ export type TicketRow = {
   resolved_at: string | null;
   resolution_notes: string | null;
   test_results: string | null;
+  documentation: string;
   created_at: string;
   updated_at: string;
 };
@@ -43,6 +44,7 @@ export type UpdateTicketInput = {
   status?: TicketStatus;
   resolution_notes?: string;
   test_results?: string;
+  documentation?: Attachment[];
   assigned_to?: string | null;
 };
 
@@ -127,6 +129,14 @@ export async function listTickets(filters: TicketFilters = {}): Promise<TicketRo
         created_by, created_by_email, assigned_to,
         resolved_at::text AS resolved_at,
         resolution_notes, test_results,
+        COALESCE(
+          (SELECT jsonb_agg(jsonb_build_object(
+            'filename', d->>'filename',
+            'mimeType', d->>'mimeType',
+            'sizeBytes', (d->>'sizeBytes')::int
+          )) FROM jsonb_array_elements(COALESCE(documentation, '[]'::jsonb)) d),
+          '[]'::jsonb
+        ) AS documentation,
         created_at::text AS created_at,
         updated_at::text AS updated_at
       FROM ${table("tickets")}
@@ -147,6 +157,7 @@ export async function getTicket(ticketId: string): Promise<TicketRow | null> {
         created_by, created_by_email, assigned_to,
         resolved_at::text AS resolved_at,
         resolution_notes, test_results,
+        COALESCE(documentation, '[]'::jsonb) AS documentation,
         created_at::text AS created_at,
         updated_at::text AS updated_at
       FROM ${table("tickets")}
@@ -175,6 +186,10 @@ export async function updateTicket(ticketId: string, input: UpdateTicketInput): 
   if (input.test_results !== undefined) {
     sets.push("test_results = @testResults");
     params.testResults = input.test_results;
+  }
+  if (input.documentation !== undefined) {
+    sets.push("documentation = @documentation");
+    params.documentation = JSON.stringify(input.documentation);
   }
   if (input.assigned_to !== undefined) {
     sets.push("assigned_to = @assignedTo");
