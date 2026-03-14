@@ -198,6 +198,71 @@ async function runMigrations() {
     await pgExec(`
       ALTER TABLE tickets ADD COLUMN IF NOT EXISTS documentation JSONB DEFAULT '[]'
     `);
+    await pgExec(`
+      ALTER TABLE tickets ADD COLUMN IF NOT EXISTS test_checklist JSONB DEFAULT '[]'
+    `);
+
+    // v3: Spec-driven workflow statuses + new columns + activity/comments tables
+    await pgExec(`
+      DO $$ BEGIN
+        ALTER TABLE tickets DROP CONSTRAINT IF EXISTS tickets_status_check;
+        ALTER TABLE tickets ADD CONSTRAINT tickets_status_check
+          CHECK (status IN (
+            'todo','pending_spec','pending_spec_approval','spec_approved',
+            'adjusted_spec','pending_deployment','deployment_approved','deployed'
+          ));
+        -- Migrate old statuses to new equivalents
+        UPDATE tickets SET status = 'pending_spec' WHERE status = 'approved';
+        UPDATE tickets SET status = 'pending_deployment' WHERE status IN ('coded', 'pending_review');
+        UPDATE tickets SET status = 'deployment_approved' WHERE status = 'deploy_approved';
+      EXCEPTION WHEN others THEN NULL;
+      END $$
+    `);
+    // Spec phase columns
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS complexity TEXT DEFAULT 'medium'");
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS functional_spec TEXT");
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS design_notes TEXT");
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ui_mockup JSONB");
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS testing_scenarios JSONB DEFAULT '[]'");
+    // Dev phase columns
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS dev_summary TEXT");
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS code_changes JSONB DEFAULT '[]'");
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS dev_test_results TEXT");
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS dev_evidence JSONB DEFAULT '[]'");
+    // Deploy phase columns
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS deploy_info TEXT");
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS prod_test_results TEXT");
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS prod_evidence JSONB DEFAULT '[]'");
+
+    // Activity log table
+    await pgExec(`
+      CREATE TABLE IF NOT EXISTS ticket_activity_log (
+        log_id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        ticket_id      TEXT NOT NULL REFERENCES tickets(ticket_id) ON DELETE CASCADE,
+        action         TEXT NOT NULL,
+        old_value      TEXT,
+        new_value      TEXT,
+        details        TEXT,
+        user_id        TEXT NOT NULL,
+        user_email     TEXT NOT NULL,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_ticket_activity_ticket ON ticket_activity_log (ticket_id, created_at)");
+
+    // Comments table
+    await pgExec(`
+      CREATE TABLE IF NOT EXISTS ticket_comments (
+        comment_id     TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        ticket_id      TEXT NOT NULL REFERENCES tickets(ticket_id) ON DELETE CASCADE,
+        user_id        TEXT NOT NULL,
+        user_email     TEXT NOT NULL,
+        body           TEXT NOT NULL,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket ON ticket_comments (ticket_id, created_at)");
 
     // Reports table (custom report generator)
     await pgExec(`
