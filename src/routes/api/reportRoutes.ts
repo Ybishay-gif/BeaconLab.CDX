@@ -34,15 +34,17 @@ const createReportSchema = z.object({
     )
     .default([]),
   selectedColumns: z.array(z.string()).min(1),
+  includeOpps: z.boolean().default(false),
 });
 
 export const reportRoutes = Router();
 
 // Static routes FIRST (before :id param routes)
 
-reportRoutes.get("/reports/schema", async (_req, res, next) => {
+reportRoutes.get("/reports/schema", async (req, res, next) => {
   try {
-    const columns = await getTableSchema();
+    const includeOpps = req.query.includeOpps === "true";
+    const columns = await getTableSchema(includeOpps);
     res.json({ columns });
   } catch (error) {
     next(error);
@@ -51,7 +53,8 @@ reportRoutes.get("/reports/schema", async (_req, res, next) => {
 
 reportRoutes.get("/reports/filter-values/:column", async (req, res, next) => {
   try {
-    const values = await getFilterValues(req.params.column);
+    const includeOpps = req.query.includeOpps === "true";
+    const values = await getFilterValues(req.params.column, includeOpps);
     res.json({ values });
   } catch (error) {
     next(error);
@@ -80,6 +83,7 @@ const checkReportSchema = z.object({
       })
     )
     .default([]),
+  includeOpps: z.boolean().default(false),
 });
 
 reportRoutes.post("/reports/check", async (req, res, next) => {

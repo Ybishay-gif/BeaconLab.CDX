@@ -20,6 +20,7 @@ export type ReportRow = {
   fixed_filters: string; // JSONB stringified
   dynamic_filters: string;
   selected_columns: string;
+  include_opps: boolean;
   status: ReportStatus;
   file_url: string | null;
   row_count: number | null;
@@ -55,6 +56,7 @@ export type CreateReportInput = {
   fixedFilters: FixedFilters;
   dynamicFilters: DynamicFilter[];
   selectedColumns: string[];
+  includeOpps?: boolean;
 };
 
 // ── Schema Discovery (cached 24h) ─────────────────────────────────
@@ -62,26 +64,29 @@ export type CreateReportInput = {
 const SCHEMA_CACHE_KEY = "report:table-schema";
 const SCHEMA_TTL = 24 * 60 * 60 * 1000;
 
-export async function getTableSchema(): Promise<ColumnSchema[]> {
-  const cached = cacheGet<ColumnSchema[]>(SCHEMA_CACHE_KEY);
+export async function getTableSchema(includeOpps = false): Promise<ColumnSchema[]> {
+  const cacheKey = includeOpps ? `${SCHEMA_CACHE_KEY}:opps` : SCHEMA_CACHE_KEY;
+  const cached = cacheGet<ColumnSchema[]>(cacheKey);
   if (cached) return cached;
 
-  // Query INFORMATION_SCHEMA for the Cross Tactic table
-  // The table is in Custom_Reports dataset, not planning_app
+  const tableName = includeOpps
+    ? "Cross Tactic Analysis Full Data - with opps"
+    : "Cross Tactic Analysis Full Data ";
+
   const rows = await bqQuery<ColumnSchema>(
     `SELECT column_name, data_type
      FROM \`crblx-beacon-prod.Custom_Reports.INFORMATION_SCHEMA.COLUMNS\`
-     WHERE table_name = 'Cross Tactic Analysis Full Data '
+     WHERE table_name = '${tableName}'
      ORDER BY ordinal_position`
   );
 
-  cacheSet(SCHEMA_CACHE_KEY, rows, SCHEMA_TTL);
+  cacheSet(cacheKey, rows, SCHEMA_TTL);
   return rows;
 }
 
 /** Validate column names against the schema to prevent SQL injection */
-async function validateColumns(columns: string[]): Promise<void> {
-  const schema = await getTableSchema();
+async function validateColumns(columns: string[], includeOpps = false): Promise<void> {
+  const schema = await getTableSchema(includeOpps);
   const validNames = new Set(schema.map((c) => c.column_name));
   for (const col of columns) {
     if (!validNames.has(col)) {
@@ -92,17 +97,18 @@ async function validateColumns(columns: string[]): Promise<void> {
 
 // ── Filter Values (for fixed filter dropdowns) ─────────────────────
 
-export async function getFilterValues(columnName: string): Promise<string[]> {
+export async function getFilterValues(columnName: string, includeOpps = false): Promise<string[]> {
   // Validate column name against schema
-  await validateColumns([columnName]);
+  await validateColumns([columnName], includeOpps);
 
-  const cacheKey = `report:filter-values:${columnName}`;
+  const cacheKey = `report:filter-values:${columnName}${includeOpps ? ":opps" : ""}`;
   const cached = cacheGet<string[]>(cacheKey);
   if (cached) return cached;
 
+  const sourceTable = includeOpps ? config.rawCrossTacticWithOppsTable : config.rawCrossTacticTable;
   const rows = await bqQuery<{ val: string }>(
     `SELECT DISTINCT \`${columnName}\` AS val
-     FROM ${config.rawCrossTacticTable}
+     FROM ${sourceTable}
      WHERE \`${columnName}\` IS NOT NULL
      ORDER BY val
      LIMIT 10000`
@@ -123,6 +129,7 @@ export async function listReports(userId: string): Promise<ReportRow[]> {
             selected_columns::text AS selected_columns,
             date_start::text AS date_start,
             date_end::text AS date_end,
+            COALESCE(include_opps, false) AS include_opps,
             error_message, user_id,
             created_at::text AS created_at,
             updated_at::text AS updated_at,
@@ -143,6 +150,7 @@ export async function getReport(reportId: string): Promise<ReportRow | null> {
             selected_columns::text AS selected_columns,
             date_start::text AS date_start,
             date_end::text AS date_end,
+            COALESCE(include_opps, false) AS include_opps,
             error_message, user_id,
             created_at::text AS created_at,
             updated_at::text AS updated_at,
@@ -158,10 +166,12 @@ export async function createReport(
   userId: string,
   input: CreateReportInput
 ): Promise<{ reportId: string }> {
+  const useOpps = input.includeOpps ?? false;
+
   // Validate all column names before saving
-  await validateColumns(input.selectedColumns);
+  await validateColumns(input.selectedColumns, useOpps);
   for (const f of input.dynamicFilters) {
-    await validateColumns([f.column]);
+    await validateColumns([f.column], useOpps);
   }
 
   const reportId = randomUUID();
@@ -169,11 +179,11 @@ export async function createReport(
     `INSERT INTO ${table("reports")} (
        report_id, report_name, user_id, date_start, date_end,
        fixed_filters, dynamic_filters, selected_columns,
-       status, created_at, updated_at
+       include_opps, status, created_at, updated_at
      ) VALUES (
        @reportId, @reportName, @userId, @dateStart, @dateEnd,
        @fixedFilters, @dynamicFilters, @selectedColumns,
-       'pending', CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+       @includeOpps, 'pending', CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
      )`,
     {
       reportId,
@@ -184,6 +194,7 @@ export async function createReport(
       fixedFilters: JSON.stringify(input.fixedFilters),
       dynamicFilters: JSON.stringify(input.dynamicFilters),
       selectedColumns: JSON.stringify(input.selectedColumns),
+      includeOpps: useOpps,
     }
   );
 
@@ -234,10 +245,13 @@ export async function checkRowCount(input: {
   dateEnd: string;
   fixedFilters: FixedFilters;
   dynamicFilters: DynamicFilter[];
+  includeOpps?: boolean;
 }): Promise<{ count: number }> {
+  const useOpps = input.includeOpps ?? false;
+
   // Validate dynamic filter columns
   for (const f of input.dynamicFilters) {
-    await validateColumns([f.column]);
+    await validateColumns([f.column], useOpps);
   }
 
   // Reuse buildSelectSql with a dummy column — we only need the WHERE clause
@@ -246,7 +260,8 @@ export async function checkRowCount(input: {
     input.fixedFilters,
     input.dynamicFilters,
     input.dateStart,
-    input.dateEnd
+    input.dateEnd,
+    useOpps
   );
 
   // Replace SELECT ... FROM with SELECT COUNT(*) as cnt FROM
@@ -295,7 +310,8 @@ function buildSelectSql(
   fixedFilters: FixedFilters,
   dynamicFilters: DynamicFilter[],
   dateStart: string,
-  dateEnd: string
+  dateEnd: string,
+  includeOpps = false
 ): { sql: string; params: Record<string, unknown> } {
   // Columns are already validated
   const selectCols = columns.map((c) => `\`${c}\``).join(", ");
@@ -361,7 +377,8 @@ function buildSelectSql(
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  const sql = `SELECT ${selectCols} FROM ${config.rawCrossTacticTable} ${whereClause}`;
+  const sourceTable = includeOpps ? config.rawCrossTacticWithOppsTable : config.rawCrossTacticTable;
+  const sql = `SELECT ${selectCols} FROM ${sourceTable} ${whereClause}`;
 
   return { sql, params };
 }
@@ -376,11 +393,12 @@ export async function generateReport(reportId: string): Promise<void> {
     const fixedFilters: FixedFilters = JSON.parse(report.fixed_filters);
     const dynamicFilters: DynamicFilter[] = JSON.parse(report.dynamic_filters);
     const selectedColumns: string[] = JSON.parse(report.selected_columns);
+    const useOpps = report.include_opps ?? false;
 
     // Re-validate columns
-    await validateColumns(selectedColumns);
+    await validateColumns(selectedColumns, useOpps);
     for (const f of dynamicFilters) {
-      await validateColumns([f.column]);
+      await validateColumns([f.column], useOpps);
     }
 
     // Build the query
@@ -389,7 +407,8 @@ export async function generateReport(reportId: string): Promise<void> {
       fixedFilters,
       dynamicFilters,
       report.date_start,
-      report.date_end
+      report.date_end,
+      useOpps
     );
 
     // Create a destination temp table in BQ

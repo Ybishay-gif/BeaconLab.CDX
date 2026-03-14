@@ -219,6 +219,7 @@ async function runMigrations() {
     `);
     await pgExec("CREATE INDEX IF NOT EXISTS idx_reports_user ON reports(user_id, created_at DESC)");
     await pgExec("CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status)");
+    await pgExec("ALTER TABLE reports ADD COLUMN IF NOT EXISTS include_opps BOOLEAN NOT NULL DEFAULT false");
 
     // ── Roles & Permissions ────────────────────────────────────────
     await pgExec(`

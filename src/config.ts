@@ -21,6 +21,8 @@ export const config = {
   adminAccessCode: required("ADMIN_ACCESS_CODE"),
   rawCrossTacticTable:
     process.env.BQ_RAW_CROSS_TACTIC_TABLE || "`crblx-beacon-prod.Custom_Reports.Cross Tactic Analysis Full Data `",
+  rawCrossTacticWithOppsTable:
+    process.env.BQ_RAW_CROSS_TACTIC_OPPS_TABLE || "`crblx-beacon-prod.Custom_Reports.Cross Tactic Analysis Full Data - with opps`",
 
   // Reports
   reportsBucket: process.env.REPORTS_GCS_BUCKET || "beacon-lab-reports",
