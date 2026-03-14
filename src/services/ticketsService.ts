@@ -20,7 +20,7 @@ export const STATUS_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
   pending_spec_approval: ["spec_approved", "adjusted_spec"],
   spec_approved: ["pending_deployment"],
   adjusted_spec: ["pending_spec_approval"],
-  pending_deployment: ["deployment_approved"],
+  pending_deployment: ["deployment_approved", "adjusted_spec"],
   deployment_approved: ["deployed"],
   deployed: [],
 };
