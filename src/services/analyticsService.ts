@@ -110,6 +110,7 @@ export type PriceExplorationRow = {
   stat_sig: string;
   stat_sig_channel_group: string;
   stat_sig_source: string;
+  is_valid_tp: boolean;
 };
 
 export type PlanMergedRow = {
@@ -519,6 +520,7 @@ function chooseRecommendedTestingPoint(
     const cpbUplift = toFiniteNumberOrNull(row.cpb_uplift);
     return (
       tp !== 0 &&
+      row.is_valid_tp !== false &&
       additionalClicks > 0 &&
       cpcUplift !== null &&
       cpbUplift !== null &&
@@ -1673,7 +1675,15 @@ async function getPriceExplorationBQ(
           ssd_metrics.ssd_q2b,
           ssd_metrics.ssd_performance,
           ssd_metrics.ssd_roe,
-          ssd_metrics.ssd_combined_ratio
+          ssd_metrics.ssd_combined_ratio,
+          CASE
+            WHEN final_rows.testing_point = 0 THEN TRUE
+            WHEN final_rows.bids >= 0.5 * PERCENTILE_CONT(
+              CASE WHEN final_rows.testing_point != 0 THEN final_rows.bids END, 0.5
+            ) OVER (PARTITION BY final_rows.channel_group_name, final_rows.state)
+            THEN TRUE
+            ELSE FALSE
+          END AS is_valid_tp
         FROM final_rows
         LEFT JOIN state_channel_financials
           ON state_channel_financials.channel_group_name = final_rows.channel_group_name
@@ -1691,6 +1701,7 @@ async function getPriceExplorationBQ(
               CASE
                 WHEN testing_point != 0
                   AND stat_sig != 'disqualified'
+                  AND is_valid_tp = TRUE
                   AND cpb_uplift IS NOT NULL
                   AND cpb_uplift <= 0.10
                   AND additional_clicks > 0
@@ -1701,6 +1712,7 @@ async function getPriceExplorationBQ(
               CASE
                 WHEN testing_point != 0
                   AND stat_sig != 'disqualified'
+                  AND is_valid_tp = TRUE
                   AND cpb_uplift IS NOT NULL
                   AND cpb_uplift <= 0.10
                   AND additional_clicks > 0
