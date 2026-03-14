@@ -269,6 +269,25 @@ async function runMigrations() {
     `);
     await pgExec("CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket ON ticket_comments (ticket_id, created_at)");
 
+    // v4: Add done + reopened statuses
+    await pgExec(`
+      DO $$ BEGIN
+        ALTER TABLE tickets DROP CONSTRAINT IF EXISTS tickets_status_check;
+      EXCEPTION WHEN others THEN NULL;
+      END $$
+    `);
+    await pgExec(`
+      DO $$ BEGIN
+        ALTER TABLE tickets ADD CONSTRAINT tickets_status_check
+          CHECK (status IN (
+            'todo','pending_spec','pending_spec_approval','spec_approved',
+            'adjusted_spec','pending_deployment','deployment_approved','deployed',
+            'done','reopened'
+          ));
+      EXCEPTION WHEN others THEN NULL;
+      END $$
+    `);
+
     // Reports table (custom report generator)
     await pgExec(`
       CREATE TABLE IF NOT EXISTS reports (

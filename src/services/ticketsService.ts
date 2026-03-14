@@ -9,7 +9,9 @@ export type TicketStatus =
   | "adjusted_spec"
   | "pending_deployment"
   | "deployment_approved"
-  | "deployed";
+  | "deployed"
+  | "done"
+  | "reopened";
 
 export type TicketComplexity = "low" | "medium" | "high" | "critical";
 
@@ -22,7 +24,9 @@ export const STATUS_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
   adjusted_spec: ["pending_spec_approval"],
   pending_deployment: ["deployment_approved", "adjusted_spec"],
   deployment_approved: ["deployed"],
-  deployed: [],
+  deployed: ["done", "reopened"],
+  done: [],
+  reopened: ["pending_spec_approval"],
 };
 
 export type TicketRow = {

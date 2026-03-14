@@ -55,6 +55,8 @@ const VALID_STATUSES = [
   "pending_deployment",
   "deployment_approved",
   "deployed",
+  "done",
+  "reopened",
 ] as const;
 
 const updateTicketSchema = z.object({
