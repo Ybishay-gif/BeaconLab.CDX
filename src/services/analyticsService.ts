@@ -105,6 +105,8 @@ export type PriceExplorationRow = {
   roe: number | null;
   combined_ratio: number | null;
   recommended_testing_point: number | null;
+  algorithm_recommended_tp: number | null;
+  is_override: boolean;
   stat_sig: string;
   stat_sig_channel_group: string;
   stat_sig_source: string;
@@ -1787,6 +1789,9 @@ export async function getPriceExploration(
         continue;
       }
       for (const row of groupRows) {
+        const sqlRecommended = Number(row.recommended_testing_point) || 0;
+        row.algorithm_recommended_tp = sqlRecommended;
+        row.is_override = normalizedOverride !== sqlRecommended;
         row.recommended_testing_point = normalizedOverride;
       }
     }
@@ -1820,11 +1825,12 @@ export async function getPriceExploration(
     const hasValidOverride =
       Number.isFinite(Number(overrideTp)) &&
       groupRows.some((row) => Number(row.testing_point) === Number(overrideTp));
-    const recommendedTp = hasValidOverride
-      ? Number(overrideTp)
-      : chooseRecommendedTestingPoint(groupRows, matchedRule);
+    const algorithmTp = chooseRecommendedTestingPoint(groupRows, matchedRule);
+    const recommendedTp = hasValidOverride ? Number(overrideTp) : algorithmTp;
     for (const row of groupRows) {
       row.recommended_testing_point = recommendedTp;
+      row.algorithm_recommended_tp = algorithmTp;
+      row.is_override = hasValidOverride;
     }
   }
 
