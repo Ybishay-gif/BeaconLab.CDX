@@ -1613,30 +1613,25 @@ async function getPriceExplorationBQ(
             NULLIF(binds_state_channel, 0)
           ) AS current_cpb,
           -- Expected CPB: expected_cost / (actual_binds + additional_binds)
-          SAFE_DIVIDE(
-            expected_total_cost,
-            NULLIF(
-              COALESCE(binds_state_channel, 0) +
-              CASE
-                WHEN testing_point = 0         THEN 0
-                WHEN stat_sig = 'disqualified' THEN 0
-                ELSE (expected_binds - COALESCE(baseline_expected_binds, 0))
-              END,
-              0
+          -- Guard: suppress when projected total binds < 1.0 (near-zero denominator produces absurd values)
+          CASE
+            WHEN testing_point = 0         THEN SAFE_DIVIDE(expected_total_cost, NULLIF(COALESCE(binds_state_channel, 0), 0))
+            WHEN stat_sig = 'disqualified' THEN NULL
+            WHEN (COALESCE(binds_state_channel, 0) + (expected_binds - COALESCE(baseline_expected_binds, 0))) < 1.0 THEN NULL
+            ELSE SAFE_DIVIDE(
+              expected_total_cost,
+              (COALESCE(binds_state_channel, 0) + (expected_binds - COALESCE(baseline_expected_binds, 0)))
             )
-          ) AS expected_cpb,
+          END AS expected_cpb,
           -- CPB uplift: (expected_cpb - baseline_expected_cpb) / baseline_expected_cpb
           CASE
             WHEN testing_point = 0         THEN NULL
             WHEN stat_sig = 'disqualified' THEN NULL
+            WHEN (COALESCE(binds_state_channel, 0) + (expected_binds - COALESCE(baseline_expected_binds, 0))) < 1.0 THEN NULL
             ELSE SAFE_DIVIDE(
               SAFE_DIVIDE(
                 expected_total_cost,
-                NULLIF(
-                  COALESCE(binds_state_channel, 0) +
-                  (expected_binds - COALESCE(baseline_expected_binds, 0)),
-                  0
-                )
+                (COALESCE(binds_state_channel, 0) + (expected_binds - COALESCE(baseline_expected_binds, 0)))
               ) - baseline_expected_cpb,
               NULLIF(baseline_expected_cpb, 0)
             )
