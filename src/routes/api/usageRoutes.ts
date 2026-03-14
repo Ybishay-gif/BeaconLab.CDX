@@ -40,6 +40,7 @@ usageRoutes.get("/usage/events", requirePermission("usage_analytics:view"), asyn
       startDate: typeof req.query.startDate === "string" ? req.query.startDate : undefined,
       endDate: typeof req.query.endDate === "string" ? req.query.endDate : undefined,
       userId: typeof req.query.userId === "string" ? req.query.userId : undefined,
+      userSearch: typeof req.query.userSearch === "string" ? req.query.userSearch : undefined,
       eventType: typeof req.query.eventType === "string" ? req.query.eventType : undefined,
       page: typeof req.query.page === "string" ? req.query.page : undefined,
       module: typeof req.query.module === "string" ? req.query.module : undefined,

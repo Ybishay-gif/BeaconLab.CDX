@@ -158,7 +158,7 @@ const STAT_SIG_CONFIDENCE = {
 };
 function resolveStrategyKey(raw) {
     const s = String(raw || "").trim().toLowerCase();
-    if (s.includes("aggressive") || s.includes("high"))
+    if (s.includes("aggressive") || s.includes("high") || s === "growth")
         return "aggressive";
     if (s.includes("cautious") || s.includes("cost") || s.includes("low"))
         return "cautious";
@@ -1179,15 +1179,27 @@ async function getPriceExplorationBQ(normalized) {
             ELSE                                cpc_uplift_state        -- 'state'
           END AS cpc_uplift,
           -- Additional clicks: delta from baseline
+          -- For channel fallback, use blended WR uplift × baseline WR × total bids
+          -- (raw state WR can diverge from blended channel WR, giving wrong sign)
           CASE
             WHEN testing_point = 0         THEN 0
             WHEN stat_sig = 'disqualified' THEN 0
+            WHEN stat_sig = 'channel'      THEN
+              COALESCE(win_rate_uplift_channel, 0)
+              * COALESCE(baseline_win_rate_channel_state, 0)
+              * total_bids_channel_state
             ELSE (expected_clicks - COALESCE(baseline_expected_clicks, 0))
           END AS additional_clicks,
           -- Expected bind change: delta from baseline
+          -- Same blended approach for channel fallback
           CASE
             WHEN testing_point = 0         THEN 0
             WHEN stat_sig = 'disqualified' THEN 0
+            WHEN stat_sig = 'channel'      THEN
+              COALESCE(win_rate_uplift_channel, 0)
+              * COALESCE(baseline_win_rate_channel_state, 0)
+              * total_bids_channel_state
+              * quote_rate * q2b_rate
             ELSE (expected_binds - COALESCE(baseline_expected_binds, 0))
           END AS expected_bind_change,
           -- Additional budget: delta from baseline projected cost (not actual spend)

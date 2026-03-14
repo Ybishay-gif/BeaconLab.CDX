@@ -14,6 +14,7 @@ export interface UsageEventRow {
   session_id: string;
   user_id: string;
   user_email: string;
+  user_name: string | null;
   event_type: string;
   page: string | null;
   action: string | null;
@@ -26,6 +27,7 @@ export interface UsageQueryParams {
   startDate?: string;
   endDate?: string;
   userId?: string;
+  userSearch?: string;
   eventType?: string;
   page?: string;
   module?: string;
@@ -66,46 +68,59 @@ export async function queryUsageEvents(params: UsageQueryParams): Promise<{
   const sqlParams: Record<string, unknown> = {};
 
   if (params.startDate) {
-    conditions.push("created_at >= @startDate::date");
+    conditions.push("e.created_at >= @startDate::date");
     sqlParams.startDate = params.startDate;
   }
   if (params.endDate) {
-    conditions.push("created_at < (@endDate::date + INTERVAL '1 day')");
+    conditions.push("e.created_at < (@endDate::date + INTERVAL '1 day')");
     sqlParams.endDate = params.endDate;
   }
   if (params.userId) {
-    conditions.push("user_id = @userId");
+    conditions.push("e.user_id = @userId");
     sqlParams.userId = params.userId;
   }
+  if (params.userSearch) {
+    conditions.push(
+      "(e.user_email ILIKE '%' || @userSearch || '%' OR COALESCE(u.name, '') ILIKE '%' || @userSearch || '%')"
+    );
+    sqlParams.userSearch = params.userSearch;
+  }
   if (params.eventType) {
-    conditions.push("event_type = @eventType");
+    conditions.push("e.event_type = @eventType");
     sqlParams.eventType = params.eventType;
   }
   if (params.page) {
-    conditions.push("page = @page");
+    conditions.push("e.page = @page");
     sqlParams.page = params.page;
   }
   if (params.module) {
-    conditions.push("module = @module");
+    conditions.push("e.module = @module");
     sqlParams.module = params.module;
   }
 
   const where = conditions.join(" AND ");
   const limit = Math.min(params.limit || 500, 5000);
   const offset = params.offset || 0;
+  const usersTable = table("users");
+  const eventsTable = table("usage_events");
 
   const countResult = await query<{ count: string }>(
-    `SELECT COUNT(*)::text AS count FROM ${table("usage_events")} WHERE ${where}`,
+    `SELECT COUNT(*)::text AS count
+     FROM ${eventsTable} e
+     LEFT JOIN ${usersTable} u ON e.user_id = u.user_id
+     WHERE ${where}`,
     sqlParams
   );
   const total = Number(countResult[0]?.count || 0);
 
   const rows = await query<UsageEventRow>(
-    `SELECT id, session_id, user_id, user_email, event_type, page, action,
-            metadata, module, created_at::text AS created_at
-     FROM ${table("usage_events")}
+    `SELECT e.id, e.session_id, e.user_id, e.user_email, u.name AS user_name,
+            e.event_type, e.page, e.action, e.metadata, e.module,
+            e.created_at::text AS created_at
+     FROM ${eventsTable} e
+     LEFT JOIN ${usersTable} u ON e.user_id = u.user_id
      WHERE ${where}
-     ORDER BY created_at DESC
+     ORDER BY e.created_at DESC
      LIMIT ${limit} OFFSET ${offset}`,
     sqlParams
   );
