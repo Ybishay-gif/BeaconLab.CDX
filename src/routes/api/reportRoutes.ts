@@ -124,12 +124,12 @@ reportRoutes.get("/reports/:id", async (req, res, next) => {
   }
 });
 
-// Download report
+// Download report — return signed URL as JSON (redirect breaks cross-origin fetch)
 reportRoutes.get("/reports/:id/download", async (req, res, next) => {
   try {
     const url = await getDownloadUrl(req.params.id);
     if (!url) return res.status(404).json({ error: "Report not ready or not found" });
-    res.redirect(url);
+    res.json({ url });
   } catch (error) {
     next(error);
   }
