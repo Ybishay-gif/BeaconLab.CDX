@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { Request, Response, NextFunction } from "express";
 import {
   getPlanMergedAnalytics,
   getPlansComparison,
@@ -15,15 +16,37 @@ import { syncAllFromBQ } from "../../jobs/syncFromBQ.js";
 import { snapshotSuggestedCpb } from "../../jobs/snapshotSuggestedCpb.js";
 import { parseOptionalNumber, parseQueryArray } from "./queryParsers.js";
 import { cacheClear, cacheStats } from "../../cache.js";
+import { requireUser } from "../../middleware/auth.js";
 
 export const analyticsRoutes = Router();
 
-// ── Admin endpoints (no auth required — called by Cloud Scheduler) ──────────
+// ── Admin endpoints — require auth OR Cloud Scheduler header ────────────────
 export const adminRoutes = Router();
+
+/**
+ * Allow requests from Cloud Scheduler (sends X-CloudScheduler: true)
+ * OR authenticated users with admin permission.
+ */
+function requireAdminOrScheduler(req: Request, res: Response, next: NextFunction): void {
+  if (req.header("x-cloudscheduler") === "true") {
+    next();
+    return;
+  }
+  // Fall through to session-based auth + admin role check
+  requireUser(req, res, (err?: unknown) => {
+    if (err) { next(err); return; }
+    if (res.headersSent) return; // requireUser already sent 401
+    if (req.user?.role !== "admin") {
+      res.status(403).json({ error: "Admin access required" });
+      return;
+    }
+    next();
+  });
+}
 
 // Cache warming — called by Cloud Scheduler daily to pre-warm the analytics cache.
 // Also callable manually by admins.
-adminRoutes.post("/admin/warm-cache", async (_req, res) => {
+adminRoutes.post("/admin/warm-cache", requireAdminOrScheduler, async (_req, res) => {
   const start = Date.now();
   try {
     const plans = await listPlans();
@@ -83,7 +106,7 @@ adminRoutes.post("/admin/warm-cache", async (_req, res) => {
 // BQ → PG sync — called by Cloud Scheduler daily (or manually by admins).
 // Also triggers the suggested-CPB snapshot after sync completes.
 // Clears the analytics BQ cache so next request gets fresh data.
-adminRoutes.post("/admin/sync-from-bq", async (_req, res) => {
+adminRoutes.post("/admin/sync-from-bq", requireAdminOrScheduler, async (_req, res) => {
   try {
     const syncResult = await syncAllFromBQ();
     // Chain: snapshot suggested CPB into BQ after fresh perf data is available
@@ -97,18 +120,18 @@ adminRoutes.post("/admin/sync-from-bq", async (_req, res) => {
 });
 
 // Cache diagnostics
-adminRoutes.get("/admin/cache-stats", (_req, res) => {
+adminRoutes.get("/admin/cache-stats", requireAdminOrScheduler, (_req, res) => {
   res.json(cacheStats());
 });
 
 // Manual cache clear
-adminRoutes.post("/admin/clear-cache", (_req, res) => {
+adminRoutes.post("/admin/clear-cache", requireAdminOrScheduler, (_req, res) => {
   cacheClear();
   res.json({ ok: true, message: "Analytics BQ cache cleared" });
 });
 
 // Standalone snapshot of suggested Target CPB → BQ (manual trigger).
-adminRoutes.post("/admin/snapshot-suggested-cpb", async (_req, res) => {
+adminRoutes.post("/admin/snapshot-suggested-cpb", requireAdminOrScheduler, async (_req, res) => {
   try {
     const result = await snapshotSuggestedCpb();
     res.json(result);

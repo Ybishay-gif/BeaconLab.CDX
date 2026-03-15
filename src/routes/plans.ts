@@ -17,7 +17,7 @@ import { rolesRoutes } from "./api/rolesRoutes.js";
 
 export const plansRouter = Router();
 
-// Admin routes (cache warming, etc.) — no auth required for Cloud Scheduler
+// Admin routes (cache warming, etc.) — requires auth OR Cloud Scheduler header
 plansRouter.use(adminRoutes);
 
 plansRouter.use(authRoutes);

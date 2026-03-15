@@ -14,7 +14,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const API_BASE =
   process.env.API_BASE || "https://planning-app-api-758008223769.us-central1.run.app";
-const ADMIN_CODE = process.env.ADMIN_CODE || "Kis123kis12";
+const ADMIN_CODE = process.env.ADMIN_CODE;
+if (!ADMIN_CODE) {
+  console.error("❌ ADMIN_CODE env var is required. Set it before running tests.");
+  process.exit(1);
+}
 
 /* tolerance: 0.5% for floats, exact for integers */
 const FLOAT_TOLERANCE = 0.005;

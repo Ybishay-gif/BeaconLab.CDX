@@ -13,6 +13,15 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 // Gzip / Brotli compression for JSON responses
 app.use(compression());
+// Security headers
+app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("X-XSS-Protection", "0"); // Modern browsers: rely on CSP instead
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    next();
+});
 // CORS — allow Cloudflare Pages frontend and local dev
 app.use(cors({
     origin: [
@@ -177,6 +186,91 @@ async function runMigrations() {
         await pgExec(`
       ALTER TABLE tickets ADD COLUMN IF NOT EXISTS documentation JSONB DEFAULT '[]'
     `);
+        await pgExec(`
+      ALTER TABLE tickets ADD COLUMN IF NOT EXISTS test_checklist JSONB DEFAULT '[]'
+    `);
+        // v3: Spec-driven workflow statuses + new columns + activity/comments tables
+        // First drop old constraint and migrate rows, then add new constraint
+        await pgExec(`
+      DO $$ BEGIN
+        ALTER TABLE tickets DROP CONSTRAINT IF EXISTS tickets_status_check;
+      EXCEPTION WHEN others THEN NULL;
+      END $$
+    `);
+        await pgExec("UPDATE tickets SET status = 'pending_spec' WHERE status = 'approved'");
+        await pgExec("UPDATE tickets SET status = 'pending_deployment' WHERE status IN ('coded', 'pending_review')");
+        await pgExec("UPDATE tickets SET status = 'deployment_approved' WHERE status = 'deploy_approved'");
+        await pgExec(`
+      DO $$ BEGIN
+        ALTER TABLE tickets ADD CONSTRAINT tickets_status_check
+          CHECK (status IN (
+            'todo','pending_spec','pending_spec_approval','spec_approved',
+            'adjusted_spec','pending_deployment','deployment_approved','deployed'
+          ));
+      EXCEPTION WHEN others THEN NULL;
+      END $$
+    `);
+        // Spec phase columns
+        await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS complexity TEXT DEFAULT 'medium'");
+        await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS functional_spec TEXT");
+        await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS design_notes TEXT");
+        await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS ui_mockup JSONB");
+        await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS testing_scenarios JSONB DEFAULT '[]'");
+        // Dev phase columns
+        await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS dev_summary TEXT");
+        await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS code_changes JSONB DEFAULT '[]'");
+        await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS dev_test_results TEXT");
+        await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS dev_evidence JSONB DEFAULT '[]'");
+        // Deploy phase columns
+        await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS deploy_info TEXT");
+        await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS prod_test_results TEXT");
+        await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS prod_evidence JSONB DEFAULT '[]'");
+        // Activity log table
+        await pgExec(`
+      CREATE TABLE IF NOT EXISTS ticket_activity_log (
+        log_id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        ticket_id      TEXT NOT NULL REFERENCES tickets(ticket_id) ON DELETE CASCADE,
+        action         TEXT NOT NULL,
+        old_value      TEXT,
+        new_value      TEXT,
+        details        TEXT,
+        user_id        TEXT NOT NULL,
+        user_email     TEXT NOT NULL,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+        await pgExec("CREATE INDEX IF NOT EXISTS idx_ticket_activity_ticket ON ticket_activity_log (ticket_id, created_at)");
+        // Comments table
+        await pgExec(`
+      CREATE TABLE IF NOT EXISTS ticket_comments (
+        comment_id     TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        ticket_id      TEXT NOT NULL REFERENCES tickets(ticket_id) ON DELETE CASCADE,
+        user_id        TEXT NOT NULL,
+        user_email     TEXT NOT NULL,
+        body           TEXT NOT NULL,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+        await pgExec("CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket ON ticket_comments (ticket_id, created_at)");
+        // v4: Add done + reopened statuses
+        await pgExec(`
+      DO $$ BEGIN
+        ALTER TABLE tickets DROP CONSTRAINT IF EXISTS tickets_status_check;
+      EXCEPTION WHEN others THEN NULL;
+      END $$
+    `);
+        await pgExec(`
+      DO $$ BEGIN
+        ALTER TABLE tickets ADD CONSTRAINT tickets_status_check
+          CHECK (status IN (
+            'todo','pending_spec','pending_spec_approval','spec_approved',
+            'adjusted_spec','pending_deployment','deployment_approved','deployed',
+            'done','reopened'
+          ));
+      EXCEPTION WHEN others THEN NULL;
+      END $$
+    `);
         // Reports table (custom report generator)
         await pgExec(`
       CREATE TABLE IF NOT EXISTS reports (
@@ -201,6 +295,20 @@ async function runMigrations() {
         await pgExec("CREATE INDEX IF NOT EXISTS idx_reports_user ON reports(user_id, created_at DESC)");
         await pgExec("CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status)");
         await pgExec("ALTER TABLE reports ADD COLUMN IF NOT EXISTS include_opps BOOLEAN NOT NULL DEFAULT false");
+        // Report templates table
+        await pgExec(`
+      CREATE TABLE IF NOT EXISTS report_templates (
+        template_id      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        user_id          TEXT NOT NULL,
+        template_name    TEXT NOT NULL,
+        fixed_filters    JSONB NOT NULL DEFAULT '{}',
+        dynamic_filters  JSONB NOT NULL DEFAULT '[]',
+        selected_columns JSONB NOT NULL DEFAULT '[]',
+        include_opps     BOOLEAN NOT NULL DEFAULT false,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+        await pgExec("CREATE INDEX IF NOT EXISTS idx_report_templates_user ON report_templates(user_id, created_at DESC)");
         // ── Roles & Permissions ────────────────────────────────────────
         await pgExec(`
       CREATE TABLE IF NOT EXISTS roles (
@@ -254,6 +362,29 @@ async function runMigrations() {
       )
       WHERE role_id IS NULL AND role IS NOT NULL
     `);
+        // AI Chat sessions & messages — persistent conversation history
+        await pgExec(`
+      CREATE TABLE IF NOT EXISTS ai_chat_sessions (
+        session_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT 'New conversation',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+        await pgExec("CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_user ON ai_chat_sessions(user_id, updated_at DESC)");
+        await pgExec(`
+      CREATE TABLE IF NOT EXISTS ai_chat_messages (
+        message_id BIGSERIAL PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES ai_chat_sessions(session_id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('user', 'model')),
+        content TEXT NOT NULL,
+        sql_query TEXT,
+        action JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+        await pgExec("CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_session ON ai_chat_messages(session_id, created_at ASC)");
         console.log("Migrations OK");
     }
     catch (err) {

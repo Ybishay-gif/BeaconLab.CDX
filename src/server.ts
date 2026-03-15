@@ -16,6 +16,16 @@ const __dirname = path.dirname(__filename);
 // Gzip / Brotli compression for JSON responses
 app.use(compression());
 
+// Security headers
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "0"); // Modern browsers: rely on CSP instead
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  next();
+});
+
 // CORS — allow Cloudflare Pages frontend and local dev
 app.use(
   cors({

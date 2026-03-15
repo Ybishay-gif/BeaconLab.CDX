@@ -92,6 +92,15 @@ function validatePasswordStrength(password: string): void {
   if (password.length < 8) {
     fail(400, "Password must be at least 8 characters.");
   }
+  if (!/[a-z]/.test(password)) {
+    fail(400, "Password must contain at least one lowercase letter.");
+  }
+  if (!/[A-Z]/.test(password)) {
+    fail(400, "Password must contain at least one uppercase letter.");
+  }
+  if (!/[0-9]/.test(password)) {
+    fail(400, "Password must contain at least one number.");
+  }
 }
 
 async function ensureAuthTablesExist(): Promise<void> {
