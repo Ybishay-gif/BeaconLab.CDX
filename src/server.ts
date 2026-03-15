@@ -379,7 +379,7 @@ async function runMigrations() {
         roleId = rows[0].role_id;
       }
       // Sync permissions for this role
-      await pgExec(`DELETE FROM role_permissions WHERE role_id = '${roleId}'`);
+      await dbQuery(`DELETE FROM role_permissions WHERE role_id = @roleId`, { roleId });
       for (const perm of permissions) {
         await dbQuery(
           `INSERT INTO role_permissions (role_id, permission_key) VALUES (@roleId, @perm) ON CONFLICT DO NOTHING`,

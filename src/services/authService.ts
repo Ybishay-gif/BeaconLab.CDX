@@ -205,8 +205,11 @@ async function resolvePermissions(roleId: string | null, roleFallback: string): 
   return { roleId: roleId ?? "", roleName: roleFallback, permissions: [] };
 }
 
-async function createSession(user: SessionUser): Promise<{ token: string; user: SessionUser }> {
+const SESSION_TTL_DAYS = 14;
+
+async function createSession(user: SessionUser): Promise<{ token: string; expiresAt: string; user: SessionUser }> {
   const token = randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const expiresExpr = config.usePg
     ? "NOW() + INTERVAL '14 days'"
     : "TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)";
@@ -248,7 +251,7 @@ async function createSession(user: SessionUser): Promise<{ token: string; user: 
       }
     )
   );
-  return { token, user };
+  return { token, expiresAt, user };
 }
 
 export async function getUserLoginState(
@@ -379,7 +382,10 @@ export async function loginUser(email: string, password: string): Promise<{ toke
 
 export async function loginAdminWithCode(code: string): Promise<{ token: string; user: SessionUser }> {
   await ensureAuthTablesExist();
-  if (String(code || "").trim() !== config.adminAccessCode) {
+  const provided = Buffer.from(String(code || "").trim());
+  const expected = Buffer.from(config.adminAccessCode);
+  const isValid = provided.length === expected.length && timingSafeEqual(provided, expected);
+  if (!isValid) {
     fail(401, "Invalid admin access code.");
   }
 
