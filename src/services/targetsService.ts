@@ -738,36 +738,39 @@ export async function batchCreateTargets(
   const hasPlanIdColumn = await hasTargetsPlanIdColumn();
   const hasAltColumn = await hasTargetsActivityLeadTypeColumn();
   const alt = String(activityLeadType || "").trim();
-  const BATCH = 500;
-  const esc = (s: string) => s.replace(/'/g, "''");
+  let cols = hasPlanIdColumn
+    ? "target_id, plan_id, state, segment, source, target_value, target_cor, created_by, created_at, updated_by, updated_at"
+    : "target_id, state, segment, source, target_value, target_cor, created_by, created_at, updated_by, updated_at";
+  if (hasAltColumn) {
+    cols = hasPlanIdColumn
+      ? "target_id, plan_id, activity_lead_type, state, segment, source, target_value, target_cor, created_by, created_at, updated_by, updated_at"
+      : "target_id, activity_lead_type, state, segment, source, target_value, target_cor, created_by, created_at, updated_by, updated_at";
+  }
 
-  for (let i = 0; i < rows.length; i += BATCH) {
-    const batch = rows.slice(i, i + BATCH);
-    const vals = batch
-      .map((r) => {
-        const id = randomUUID();
-        const st = normalizeState(r.state);
-        const seg = normalizeSegment(r.segment);
-        const src = normalizeSource(r.source);
-        const val = Number(r.targetValue) || 0;
-        const altPart = hasAltColumn ? `, '${esc(alt)}'` : "";
-        if (hasPlanIdColumn) {
-          return `('${id}', '${esc(planId)}'${altPart}, '${esc(st)}', '${esc(seg)}', '${esc(src)}', ${val}, 0, '${esc(userId)}', CURRENT_TIMESTAMP(), '${esc(userId)}', CURRENT_TIMESTAMP())`;
-        }
-        return `('${id}'${altPart}, '${esc(st)}', '${esc(seg)}', '${esc(src)}', ${val}, 0, '${esc(userId)}', CURRENT_TIMESTAMP(), '${esc(userId)}', CURRENT_TIMESTAMP())`;
-      })
-      .join(",\n");
+  let valuesPlaceholder: string;
+  if (hasPlanIdColumn && hasAltColumn) {
+    valuesPlaceholder = "(@targetId, @planId, @alt, @state, @segment, @source, @targetValue, 0, @userId, CURRENT_TIMESTAMP(), @userId, CURRENT_TIMESTAMP())";
+  } else if (hasPlanIdColumn) {
+    valuesPlaceholder = "(@targetId, @planId, @state, @segment, @source, @targetValue, 0, @userId, CURRENT_TIMESTAMP(), @userId, CURRENT_TIMESTAMP())";
+  } else if (hasAltColumn) {
+    valuesPlaceholder = "(@targetId, @alt, @state, @segment, @source, @targetValue, 0, @userId, CURRENT_TIMESTAMP(), @userId, CURRENT_TIMESTAMP())";
+  } else {
+    valuesPlaceholder = "(@targetId, @state, @segment, @source, @targetValue, 0, @userId, CURRENT_TIMESTAMP(), @userId, CURRENT_TIMESTAMP())";
+  }
 
-    let cols = hasPlanIdColumn
-      ? "target_id, plan_id, state, segment, source, target_value, target_cor, created_by, created_at, updated_by, updated_at"
-      : "target_id, state, segment, source, target_value, target_cor, created_by, created_at, updated_by, updated_at";
-    if (hasAltColumn) {
-      cols = hasPlanIdColumn
-        ? "target_id, plan_id, activity_lead_type, state, segment, source, target_value, target_cor, created_by, created_at, updated_by, updated_at"
-        : "target_id, activity_lead_type, state, segment, source, target_value, target_cor, created_by, created_at, updated_by, updated_at";
-    }
+  const insertSql = `INSERT INTO ${table("targets")} (${cols}) VALUES ${valuesPlaceholder}`;
 
-    await query(`INSERT INTO ${table("targets")} (${cols}) VALUES ${vals}`);
+  for (const r of rows) {
+    await query(insertSql, {
+      targetId: randomUUID(),
+      planId,
+      alt,
+      state: normalizeState(r.state),
+      segment: normalizeSegment(r.segment),
+      source: normalizeSource(r.source),
+      targetValue: Number(r.targetValue) || 0,
+      userId,
+    });
   }
   return rows.length;
 }
