@@ -379,6 +379,31 @@ async function runMigrations() {
       WHERE role_id IS NULL AND role IS NOT NULL
     `);
 
+    // AI Chat sessions & messages — persistent conversation history
+    await pgExec(`
+      CREATE TABLE IF NOT EXISTS ai_chat_sessions (
+        session_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT 'New conversation',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_ai_chat_sessions_user ON ai_chat_sessions(user_id, updated_at DESC)");
+
+    await pgExec(`
+      CREATE TABLE IF NOT EXISTS ai_chat_messages (
+        message_id BIGSERIAL PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES ai_chat_sessions(session_id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('user', 'model')),
+        content TEXT NOT NULL,
+        sql_query TEXT,
+        action JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_session ON ai_chat_messages(session_id, created_at ASC)");
+
     console.log("Migrations OK");
   } catch (err) {
     console.warn("Migration warning (non-fatal):", err);

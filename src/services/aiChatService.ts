@@ -2,6 +2,15 @@ import { GoogleGenerativeAI, type Content } from "@google/generative-ai";
 import { query, table } from "../db/index.js";
 import { buildSystemPrompt } from "./aiKnowledge.js";
 import { ACTION_TOOLS, executeAction, type ActionResult } from "./aiActions.js";
+import {
+  ensureSession,
+  saveMessage,
+  getMessages as getDbMessages,
+  loadRecentContext,
+  updateSessionTitle,
+  deriveTitle,
+} from "./aiChatSessionService.js";
+import { config } from "../config.js";
 
 /* ------------------------------------------------------------------ */
 /*  Gemini client                                                     */
@@ -50,13 +59,41 @@ const sessions = new Map<string, Session>();
 const MAX_HISTORY = 20; // messages (user + model combined)
 const SESSION_TTL = 60 * 60 * 1000; // 1 hour
 
-function getSession(sessionId: string): Session {
+function getOrCreateSession(sessionId: string): Session {
   let session = sessions.get(sessionId);
   if (!session) {
     session = { history: [], lastAccess: Date.now() };
     sessions.set(sessionId, session);
   }
   session.lastAccess = Date.now();
+  return session;
+}
+
+/** Hydrate in-memory session from DB if empty (e.g. after server restart) */
+async function hydrateSession(sessionId: string, userId: string): Promise<Session> {
+  const session = getOrCreateSession(sessionId);
+
+  if (session.history.length === 0 && config.usePg) {
+    try {
+      // Load messages from this session's DB history
+      const dbMsgs = await getDbMessages(sessionId, userId, MAX_HISTORY);
+      for (const msg of dbMsgs) {
+        session.history.push({
+          role: msg.role as "user" | "model",
+          parts: [{ text: msg.content }],
+        });
+      }
+
+      // If this is a brand new session, load context from previous sessions
+      if (session.history.length === 0) {
+        const prevContext = await loadRecentContext(userId, sessionId);
+        session.history.push(...prevContext);
+      }
+    } catch (err) {
+      console.warn("Failed to hydrate AI chat session from DB:", err);
+    }
+  }
+
   return session;
 }
 
@@ -166,6 +203,28 @@ export interface PlanContext {
   qbcLeadsCalls?: number;
 }
 
+/** Persist user + model messages to DB (fire-and-forget, non-blocking) */
+async function persistMessages(
+  sessionId: string,
+  userId: string,
+  userMessage: string,
+  modelMessage: string,
+  sqlQuery?: string,
+  action?: { type: string; payload: unknown },
+  isFirstMessage?: boolean,
+): Promise<void> {
+  if (!config.usePg) return;
+  try {
+    await saveMessage(sessionId, "user", userMessage);
+    await saveMessage(sessionId, "model", modelMessage, sqlQuery, action);
+    if (isFirstMessage) {
+      await updateSessionTitle(sessionId, userId, deriveTitle(userMessage));
+    }
+  } catch (err) {
+    console.warn("Failed to persist AI chat message:", err);
+  }
+}
+
 export async function handleAiChat(
   message: string,
   sessionId: string,
@@ -175,7 +234,15 @@ export async function handleAiChat(
   const genAI = getGenAI();
   const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
   const systemPrompt = buildSystemPrompt(planContext);
-  const session = getSession(sessionId);
+
+  // Ensure session exists in DB and hydrate in-memory history
+  if (config.usePg) {
+    await ensureSession(sessionId, userId);
+  }
+  const session = await hydrateSession(sessionId, userId);
+  const firstPart = session.history[0]?.parts[0];
+  const isFirstMessage = session.history.length === 0 ||
+    (session.history.length === 2 && firstPart && "text" in firstPart && (firstPart.text ?? "").startsWith("[Previous conversation"));
 
   // --- Pass 1: Ask Gemini (may return SQL, a function call, or a direct answer) ---
   session.history.push({ role: "user", parts: [{ text: message }] });
@@ -202,11 +269,21 @@ export async function handleAiChat(
       functionCallPart.functionCall.name,
       (functionCallPart.functionCall.args as Record<string, unknown>) || {},
       userId,
+      { sessionId, userMessage: message, isFirstMessage },
     );
   }
 
   // --- No function call — check for SQL or direct answer ---
-  const pass1Text = pass1Response.text();
+  let pass1Text: string;
+  try {
+    pass1Text = pass1Response.text();
+  } catch {
+    // Response has no text (e.g. blocked by safety filters)
+    const fallback = "I wasn't able to generate a response. Could you rephrase your question?";
+    session.history.push({ role: "model", parts: [{ text: fallback }] });
+    trimHistory(session);
+    return { answer: fallback };
+  }
 
   const sql = extractSqlBlock(pass1Text);
 
@@ -214,8 +291,13 @@ export async function handleAiChat(
     // Direct answer (no data query needed)
     session.history.push({ role: "model", parts: [{ text: pass1Text }] });
     trimHistory(session);
+    await persistMessages(sessionId, userId, message, pass1Text, undefined, undefined, isFirstMessage);
     return { answer: pass1Text };
   }
+
+  // Store Gemini's SQL response in history so follow-ups have context
+  session.history.push({ role: "model", parts: [{ text: pass1Text }] });
+  trimHistory(session);
 
   // --- Validate & execute SQL ---
   if (!validateSql(sql)) {
@@ -243,12 +325,13 @@ export async function handleAiChat(
         const execRetry = qualifyTableNames(retrySql.includes("LIMIT") ? retrySql : `${retrySql}\nLIMIT 100`);
         queryResults = await query<Record<string, unknown>>(execRetry);
         // Fall through to pass 2 with retried results
-        return await summarizeResults(chat, session, queryResults, retrySql);
+        return await summarizeResults(chat, session, queryResults, retrySql, { sessionId, userId, userMessage: message, isFirstMessage });
       } catch {
         // Both attempts failed
         const failMsg = `I tried to query the data but encountered an error. ${retryText}`;
         session.history.push({ role: "model", parts: [{ text: failMsg }] });
         trimHistory(session);
+        await persistMessages(sessionId, userId, message, failMsg, retrySql, undefined, isFirstMessage);
         return { answer: failMsg, sql: retrySql };
       }
     }
@@ -256,11 +339,12 @@ export async function handleAiChat(
     // Gemini explained the error instead of retrying
     session.history.push({ role: "model", parts: [{ text: retryText }] });
     trimHistory(session);
+    await persistMessages(sessionId, userId, message, retryText, sql, undefined, isFirstMessage);
     return { answer: retryText, sql };
   }
 
   // --- Pass 2: Summarize results ---
-  return await summarizeResults(chat, session, queryResults, sql);
+  return await summarizeResults(chat, session, queryResults, sql, { sessionId, userId, userMessage: message, isFirstMessage });
 }
 
 /* ------------------------------------------------------------------ */
@@ -273,6 +357,7 @@ async function handleFunctionCall(
   functionName: string,
   args: Record<string, unknown>,
   userId: string,
+  persistCtx?: { sessionId: string; userMessage: string; isFirstMessage: boolean },
 ): Promise<AiChatResponse> {
   const MAX_TOOL_ROUNDS = 5; // prevent infinite loops
   let currentName = functionName;
@@ -321,6 +406,10 @@ async function handleFunctionCall(
     session.history.push({ role: "model", parts: [{ text: answer }] });
     trimHistory(session);
 
+    if (persistCtx) {
+      await persistMessages(persistCtx.sessionId, userId, persistCtx.userMessage, answer, undefined, lastAction, persistCtx.isFirstMessage);
+    }
+
     return {
       answer,
       action: lastAction,
@@ -331,6 +420,9 @@ async function handleFunctionCall(
   const fallback = "I ran into a limit while processing your request. Could you try simplifying your question?";
   session.history.push({ role: "model", parts: [{ text: fallback }] });
   trimHistory(session);
+  if (persistCtx) {
+    await persistMessages(persistCtx.sessionId, userId, persistCtx.userMessage, fallback, undefined, lastAction, persistCtx.isFirstMessage);
+  }
   return { answer: fallback, action: lastAction };
 }
 
@@ -343,6 +435,7 @@ async function summarizeResults(
   session: Session,
   results: Record<string, unknown>[],
   sql: string,
+  persistCtx?: { sessionId: string; userId: string; userMessage: string; isFirstMessage: boolean },
 ): Promise<AiChatResponse> {
   const resultText =
     results.length === 0
@@ -351,11 +444,24 @@ async function summarizeResults(
 
   const pass2Prompt = `Here are the query results. Please provide a clear, concise summary for the user. Format numbers nicely (percentages with %, currency with $, ratios as decimals). If there are multiple rows, present them in a readable way.\n\n${resultText}`;
 
+  // Store the results exchange in session history so follow-ups have context
+  session.history.push({ role: "user", parts: [{ text: pass2Prompt }] });
+  trimHistory(session);
+
   const pass2 = await withRetry(() => chat.sendMessage(pass2Prompt));
-  const answer = pass2.response.text();
+  let answer: string;
+  try {
+    answer = pass2.response.text();
+  } catch {
+    answer = resultText; // Fallback to raw results if summarization fails
+  }
 
   session.history.push({ role: "model", parts: [{ text: answer }] });
   trimHistory(session);
+
+  if (persistCtx) {
+    await persistMessages(persistCtx.sessionId, persistCtx.userId, persistCtx.userMessage, answer, sql, undefined, persistCtx.isFirstMessage);
+  }
 
   return { answer, sql };
 }

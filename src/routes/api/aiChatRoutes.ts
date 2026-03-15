@@ -1,6 +1,12 @@
 import { Router } from "express";
 import { z } from "zod";
 import { handleAiChat, checkRateLimit, type PlanContext } from "../../services/aiChatService.js";
+import {
+  listSessions,
+  getMessages,
+  deleteSession,
+  updateSessionTitle,
+} from "../../services/aiChatSessionService.js";
 
 const planContextSchema = z.object({
   activityLeadType: z.string().optional(),
@@ -18,6 +24,7 @@ const aiChatSchema = z.object({
 
 export const aiChatRoutes = Router();
 
+/* ---- Send message ---- */
 aiChatRoutes.post("/ai-chat", async (req, res, next) => {
   try {
     if (!checkRateLimit(req.user!.userId)) {
@@ -39,6 +46,51 @@ aiChatRoutes.post("/ai-chat", async (req, res, next) => {
       res.status(503).json({ answer: "The AI service is not configured properly. Please contact your administrator.", error: "config_error" });
       return;
     }
+    next(error);
+  }
+});
+
+/* ---- List sessions ---- */
+aiChatRoutes.get("/ai-chat/sessions", async (req, res, next) => {
+  try {
+    const sessions = await listSessions(req.user!.userId);
+    res.json(sessions);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* ---- Get session messages ---- */
+aiChatRoutes.get("/ai-chat/sessions/:sessionId/messages", async (req, res, next) => {
+  try {
+    const messages = await getMessages(req.params.sessionId, req.user!.userId);
+    res.json(messages);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* ---- Update session title ---- */
+aiChatRoutes.put("/ai-chat/sessions/:sessionId", async (req, res, next) => {
+  try {
+    const { title } = z.object({ title: z.string().min(1).max(200) }).parse(req.body);
+    await updateSessionTitle(req.params.sessionId, req.user!.userId, title);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/* ---- Delete session ---- */
+aiChatRoutes.delete("/ai-chat/sessions/:sessionId", async (req, res, next) => {
+  try {
+    const deleted = await deleteSession(req.params.sessionId, req.user!.userId);
+    if (!deleted) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (error) {
     next(error);
   }
 });
