@@ -131,8 +131,10 @@ async function resolvePermissions(roleId, roleFallback) {
     }
     return { roleId: roleId ?? "", roleName: roleFallback, permissions: [] };
 }
+const SESSION_TTL_DAYS = 14;
 async function createSession(user) {
     const token = randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const expiresExpr = config.usePg
         ? "NOW() + INTERVAL '14 days'"
         : "TIMESTAMP_ADD(CURRENT_TIMESTAMP(), INTERVAL 14 DAY)";
@@ -167,7 +169,7 @@ async function createSession(user) {
         role: user.role,
         roleId: user.roleId,
     }));
-    return { token, user };
+    return { token, expiresAt, user };
 }
 export async function getUserLoginState(email) {
     await ensureAuthTablesExist();

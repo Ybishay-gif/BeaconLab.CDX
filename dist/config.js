@@ -23,4 +23,6 @@ export const config = {
     // PostgreSQL — runtime DB (BQ kept only for daily sync)
     usePg: process.env.USE_PG === "true",
     cloudSqlConnectionName: process.env.CLOUD_SQL_CONNECTION_NAME || "",
+    // Shared secret for Cloud Scheduler → admin endpoint auth (optional; falls back to session auth)
+    schedulerSecret: process.env.SCHEDULER_SECRET || "",
 };

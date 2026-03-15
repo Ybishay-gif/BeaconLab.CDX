@@ -6,15 +6,23 @@ import { snapshotSuggestedCpb } from "../../jobs/snapshotSuggestedCpb.js";
 import { parseOptionalNumber, parseQueryArray } from "./queryParsers.js";
 import { cacheClear, cacheStats } from "../../cache.js";
 import { requireUser } from "../../middleware/auth.js";
+import { config } from "../../config.js";
 export const analyticsRoutes = Router();
-// ── Admin endpoints — require auth OR Cloud Scheduler header ────────────────
+// ── Admin endpoints — require auth OR internal scheduler secret ─────────────
 export const adminRoutes = Router();
 /**
- * Allow requests from Cloud Scheduler (sends X-CloudScheduler: true)
- * OR authenticated users with admin permission.
+ * Allow requests that present the internal scheduler secret (via X-Scheduler-Secret header)
+ * OR authenticated users with admin role.
+ *
+ * Cloud Scheduler jobs should be configured to send:
+ *   X-Scheduler-Secret: <value of SCHEDULER_SECRET env var>
+ *
+ * This replaces the old spoofable X-CloudScheduler header check.
  */
 function requireAdminOrScheduler(req, res, next) {
-    if (req.header("x-cloudscheduler") === "true") {
+    const schedulerSecret = config.schedulerSecret;
+    const providedSecret = req.header("x-scheduler-secret");
+    if (schedulerSecret && providedSecret && schedulerSecret === providedSecret) {
         next();
         return;
     }

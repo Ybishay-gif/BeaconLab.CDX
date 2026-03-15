@@ -185,6 +185,7 @@ function chooseRecommendedTestingPoint(rows, rule) {
         const cpcUplift = toFiniteNumberOrNull(row.cpc_uplift);
         const cpbUplift = toFiniteNumberOrNull(row.cpb_uplift);
         return (tp !== 0 &&
+            row.is_valid_tp !== false &&
             additionalClicks > 0 &&
             cpcUplift !== null &&
             cpbUplift !== null &&
@@ -1214,30 +1215,25 @@ async function getPriceExplorationBQ(normalized) {
             NULLIF(binds_state_channel, 0)
           ) AS current_cpb,
           -- Expected CPB: expected_cost / (actual_binds + additional_binds)
-          SAFE_DIVIDE(
-            expected_total_cost,
-            NULLIF(
-              COALESCE(binds_state_channel, 0) +
-              CASE
-                WHEN testing_point = 0         THEN 0
-                WHEN stat_sig = 'disqualified' THEN 0
-                ELSE (expected_binds - COALESCE(baseline_expected_binds, 0))
-              END,
-              0
+          -- Guard: suppress when projected total binds < 1.0 (near-zero denominator produces absurd values)
+          CASE
+            WHEN testing_point = 0         THEN SAFE_DIVIDE(expected_total_cost, NULLIF(COALESCE(binds_state_channel, 0), 0))
+            WHEN stat_sig = 'disqualified' THEN NULL
+            WHEN (COALESCE(binds_state_channel, 0) + (expected_binds - COALESCE(baseline_expected_binds, 0))) < 1.0 THEN NULL
+            ELSE SAFE_DIVIDE(
+              expected_total_cost,
+              (COALESCE(binds_state_channel, 0) + (expected_binds - COALESCE(baseline_expected_binds, 0)))
             )
-          ) AS expected_cpb,
+          END AS expected_cpb,
           -- CPB uplift: (expected_cpb - baseline_expected_cpb) / baseline_expected_cpb
           CASE
             WHEN testing_point = 0         THEN NULL
             WHEN stat_sig = 'disqualified' THEN NULL
+            WHEN (COALESCE(binds_state_channel, 0) + (expected_binds - COALESCE(baseline_expected_binds, 0))) < 1.0 THEN NULL
             ELSE SAFE_DIVIDE(
               SAFE_DIVIDE(
                 expected_total_cost,
-                NULLIF(
-                  COALESCE(binds_state_channel, 0) +
-                  (expected_binds - COALESCE(baseline_expected_binds, 0)),
-                  0
-                )
+                (COALESCE(binds_state_channel, 0) + (expected_binds - COALESCE(baseline_expected_binds, 0)))
               ) - baseline_expected_cpb,
               NULLIF(baseline_expected_cpb, 0)
             )
@@ -1279,7 +1275,15 @@ async function getPriceExplorationBQ(normalized) {
           ssd_metrics.ssd_q2b,
           ssd_metrics.ssd_performance,
           ssd_metrics.ssd_roe,
-          ssd_metrics.ssd_combined_ratio
+          ssd_metrics.ssd_combined_ratio,
+          CASE
+            WHEN final_rows.testing_point = 0 THEN TRUE
+            WHEN final_rows.bids >= 0.5 * PERCENTILE_CONT(
+              CASE WHEN final_rows.testing_point != 0 THEN final_rows.bids END, 0.5
+            ) OVER (PARTITION BY final_rows.channel_group_name, final_rows.state)
+            THEN TRUE
+            ELSE FALSE
+          END AS is_valid_tp
         FROM final_rows
         LEFT JOIN state_channel_financials
           ON state_channel_financials.channel_group_name = final_rows.channel_group_name
@@ -1297,6 +1301,7 @@ async function getPriceExplorationBQ(normalized) {
               CASE
                 WHEN testing_point != 0
                   AND stat_sig != 'disqualified'
+                  AND is_valid_tp = TRUE
                   AND cpb_uplift IS NOT NULL
                   AND cpb_uplift <= 0.10
                   AND additional_clicks > 0
@@ -1307,6 +1312,7 @@ async function getPriceExplorationBQ(normalized) {
               CASE
                 WHEN testing_point != 0
                   AND stat_sig != 'disqualified'
+                  AND is_valid_tp = TRUE
                   AND cpb_uplift IS NOT NULL
                   AND cpb_uplift <= 0.10
                   AND additional_clicks > 0
@@ -1381,6 +1387,9 @@ export async function getPriceExploration(filters) {
                 continue;
             }
             for (const row of groupRows) {
+                const sqlRecommended = Number(row.recommended_testing_point) || 0;
+                row.algorithm_recommended_tp = sqlRecommended;
+                row.is_override = normalizedOverride !== sqlRecommended;
                 row.recommended_testing_point = normalizedOverride;
             }
         }
@@ -1407,11 +1416,12 @@ export async function getPriceExploration(filters) {
         const overrideTp = manualOverrides.get(overrideKey) ?? manualOverrides.get(buildPriceDecisionOverrideKey(String(sample.channel_group_name || ""), state, ""));
         const hasValidOverride = Number.isFinite(Number(overrideTp)) &&
             groupRows.some((row) => Number(row.testing_point) === Number(overrideTp));
-        const recommendedTp = hasValidOverride
-            ? Number(overrideTp)
-            : chooseRecommendedTestingPoint(groupRows, matchedRule);
+        const algorithmTp = chooseRecommendedTestingPoint(groupRows, matchedRule);
+        const recommendedTp = hasValidOverride ? Number(overrideTp) : algorithmTp;
         for (const row of groupRows) {
             row.recommended_testing_point = recommendedTp;
+            row.algorithm_recommended_tp = algorithmTp;
+            row.is_override = hasValidOverride;
         }
     }
     return rows;

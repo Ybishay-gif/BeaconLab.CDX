@@ -37,7 +37,7 @@ authRoutes.post("/auth/admin-login", loginLimiter, async (req, res, next) => {
         next(error);
     }
 });
-authRoutes.post("/auth/user-status", async (req, res, next) => {
+authRoutes.post("/auth/user-status", loginLimiter, async (req, res, next) => {
     try {
         const parsed = userStatusSchema.parse(req.body);
         const state = await getUserLoginState(parsed.email);
