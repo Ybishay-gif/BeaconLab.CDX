@@ -16,6 +16,9 @@ const __dirname = path.dirname(__filename);
 // Trust proxy headers (Cloud Run sits behind a load balancer)
 app.set("trust proxy", 1);
 
+// Hide server technology fingerprint
+app.disable("x-powered-by");
+
 // Gzip / Brotli compression for JSON responses
 app.use(compression());
 
@@ -52,6 +55,12 @@ app.use(healthRouter);
 app.use("/api", plansRouter);
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // JSON parse errors from express.json() — return generic message, don't leak parser details
+  if (err instanceof SyntaxError && "type" in err && (err as { type?: string }).type === "entity.parse.failed") {
+    res.status(400).json({ error: "Invalid request body" });
+    return;
+  }
+
   if (err instanceof ZodError) {
     const summary = err.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
     console.error(`[zod] Validation failed: ${summary}`);
