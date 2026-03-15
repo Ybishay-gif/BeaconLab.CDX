@@ -9,6 +9,10 @@ import {
   getTableSchema,
   getFilterValues,
   checkRowCount,
+  listTemplates,
+  getTemplate,
+  createTemplate,
+  deleteTemplate,
 } from "../../services/reportService.js";
 
 const createReportSchema = z.object({
@@ -38,6 +42,77 @@ const createReportSchema = z.object({
 });
 
 export const reportRoutes = Router();
+
+// ── Template schema ────────────────────────────────────────────────
+
+const createTemplateSchema = z.object({
+  templateName: z.string().min(1).max(200),
+  fixedFilters: z
+    .object({
+      account_name: z.array(z.string()).optional(),
+      campaign_name: z.array(z.string()).optional(),
+      attribution_channel: z.array(z.string()).optional(),
+      data_state: z.array(z.string()).optional(),
+      transaction_sold: z.enum(["0", "1", "all"]).optional(),
+    })
+    .default({}),
+  dynamicFilters: z
+    .array(
+      z.object({
+        column: z.string(),
+        operator: z.enum(["=", "!=", ">", "<", ">=", "<=", "BETWEEN", "LIKE", "IN"]),
+        value: z.union([z.string(), z.number(), z.array(z.union([z.string(), z.number()]))]),
+      })
+    )
+    .default([]),
+  selectedColumns: z.array(z.string()).min(1),
+  includeOpps: z.boolean().default(false),
+});
+
+// ── Template routes (must be ABOVE :id routes) ────────────────────
+
+reportRoutes.get("/reports/templates", async (req, res, next) => {
+  try {
+    const templates = await listTemplates(req.user!.userId);
+    res.json({ templates });
+  } catch (error) {
+    next(error);
+  }
+});
+
+reportRoutes.get("/reports/templates/:templateId", async (req, res, next) => {
+  try {
+    const template = await getTemplate(req.params.templateId);
+    if (!template) return res.status(404).json({ error: "Template not found" });
+    res.json({ template });
+  } catch (error) {
+    next(error);
+  }
+});
+
+reportRoutes.post("/reports/templates", async (req, res, next) => {
+  try {
+    const parsed = createTemplateSchema.parse(req.body);
+    const result = await createTemplate(req.user!.userId, parsed);
+    res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+reportRoutes.delete("/reports/templates/:templateId", async (req, res, next) => {
+  try {
+    const template = await getTemplate(req.params.templateId);
+    if (!template) return res.status(404).json({ error: "Template not found" });
+    if (template.user_id !== req.user!.userId && req.user!.role !== "admin") {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+    await deleteTemplate(req.params.templateId);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Static routes FIRST (before :id param routes)
 

@@ -238,6 +238,92 @@ export async function getDownloadUrl(reportId: string): Promise<string | null> {
   return url;
 }
 
+// ── Report Templates ───────────────────────────────────────────────
+
+export type ReportTemplate = {
+  template_id: string;
+  user_id: string;
+  template_name: string;
+  fixed_filters: string;
+  dynamic_filters: string;
+  selected_columns: string;
+  include_opps: boolean;
+  created_at: string;
+};
+
+export type CreateTemplateInput = {
+  templateName: string;
+  fixedFilters: FixedFilters;
+  dynamicFilters: DynamicFilter[];
+  selectedColumns: string[];
+  includeOpps?: boolean;
+};
+
+export async function listTemplates(userId: string): Promise<ReportTemplate[]> {
+  return query<ReportTemplate>(
+    `SELECT template_id, user_id, template_name,
+            fixed_filters::text AS fixed_filters,
+            dynamic_filters::text AS dynamic_filters,
+            selected_columns::text AS selected_columns,
+            COALESCE(include_opps, false) AS include_opps,
+            created_at::text AS created_at
+     FROM ${table("report_templates")}
+     WHERE user_id = @userId
+     ORDER BY created_at DESC`,
+    { userId }
+  );
+}
+
+export async function getTemplate(templateId: string): Promise<ReportTemplate | null> {
+  const rows = await query<ReportTemplate>(
+    `SELECT template_id, user_id, template_name,
+            fixed_filters::text AS fixed_filters,
+            dynamic_filters::text AS dynamic_filters,
+            selected_columns::text AS selected_columns,
+            COALESCE(include_opps, false) AS include_opps,
+            created_at::text AS created_at
+     FROM ${table("report_templates")}
+     WHERE template_id = @templateId`,
+    { templateId }
+  );
+  return rows[0] ?? null;
+}
+
+export async function createTemplate(
+  userId: string,
+  input: CreateTemplateInput
+): Promise<{ templateId: string }> {
+  const templateId = randomUUID();
+  await query(
+    `INSERT INTO ${table("report_templates")} (
+       template_id, user_id, template_name,
+       fixed_filters, dynamic_filters, selected_columns,
+       include_opps, created_at
+     ) VALUES (
+       @templateId, @userId, @templateName,
+       @fixedFilters, @dynamicFilters, @selectedColumns,
+       @includeOpps, NOW()
+     )`,
+    {
+      templateId,
+      userId,
+      templateName: input.templateName,
+      fixedFilters: JSON.stringify(input.fixedFilters),
+      dynamicFilters: JSON.stringify(input.dynamicFilters),
+      selectedColumns: JSON.stringify(input.selectedColumns),
+      includeOpps: input.includeOpps ?? false,
+    }
+  );
+  return { templateId };
+}
+
+export async function deleteTemplate(templateId: string): Promise<void> {
+  await query(
+    `DELETE FROM ${table("report_templates")} WHERE template_id = @templateId`,
+    { templateId }
+  );
+}
+
 // ── Check Row Count (preview) ──────────────────────────────────────
 
 export async function checkRowCount(input: {

@@ -313,6 +313,21 @@ async function runMigrations() {
     await pgExec("CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status)");
     await pgExec("ALTER TABLE reports ADD COLUMN IF NOT EXISTS include_opps BOOLEAN NOT NULL DEFAULT false");
 
+    // Report templates table
+    await pgExec(`
+      CREATE TABLE IF NOT EXISTS report_templates (
+        template_id      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        user_id          TEXT NOT NULL,
+        template_name    TEXT NOT NULL,
+        fixed_filters    JSONB NOT NULL DEFAULT '{}',
+        dynamic_filters  JSONB NOT NULL DEFAULT '[]',
+        selected_columns JSONB NOT NULL DEFAULT '[]',
+        include_opps     BOOLEAN NOT NULL DEFAULT false,
+        created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_report_templates_user ON report_templates(user_id, created_at DESC)");
+
     // ── Roles & Permissions ────────────────────────────────────────
     await pgExec(`
       CREATE TABLE IF NOT EXISTS roles (
