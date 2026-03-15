@@ -13,6 +13,9 @@ const app = express();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Trust proxy headers (Cloud Run sits behind a load balancer)
+app.set("trust proxy", 1);
+
 // Gzip / Brotli compression for JSON responses
 app.use(compression());
 
