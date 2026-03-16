@@ -135,6 +135,23 @@ function replaceSafeDivide(sql: string): string {
   return result;
 }
 
+/**
+ * Run a callback with a dedicated PG client from the pool.
+ * The client is released when the callback completes (or throws).
+ * Unlike pgTransaction, this does NOT wrap in BEGIN/COMMIT.
+ */
+export async function pgWithClient(
+  fn: (exec: (sql: string) => Promise<void>) => Promise<void>
+): Promise<void> {
+  const client = await getPool().connect();
+  try {
+    const exec = async (sql: string) => { await client.query(sql); };
+    await fn(exec);
+  } finally {
+    client.release();
+  }
+}
+
 /** Gracefully close the pool (for shutdown). */
 export async function pgClose(): Promise<void> {
   if (pool) {

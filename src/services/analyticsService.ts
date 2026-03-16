@@ -762,7 +762,7 @@ async function getStateSegmentPerformanceFromDaily(
     groupBy: filters.groupBy || "state_segment_channel"
   });
 
-  return cached(cacheKey, () => bqQuery<StateSegmentPerformanceRow>(
+  return cached(cacheKey, () => query<StateSegmentPerformanceRow>(
     `
       SELECT
         ${selectDims},
@@ -811,13 +811,13 @@ async function getStateSegmentPerformanceFromDaily(
         SUM(lifetime_cost_sum) AS lifetime_cost_sum,
         SUM(lifetime_premium_sum) AS lifetime_premium_sum,
         SUM(avg_mrltv_sum) AS avg_mrltv_sum
-      FROM \`${config.projectId}.${config.dataset}.state_segment_daily\`
-      WHERE event_date BETWEEN DATE(@startDate) AND DATE(@endDate)
-        AND ("__ALL__" IN UNNEST(@states) OR state IN UNNEST(@states))
-        AND ("__ALL__" IN UNNEST(@segments) OR segment IN UNNEST(@segments))
-        AND ("__ALL__" IN UNNEST(@channelGroups) OR channel_group_name IN UNNEST(@channelGroups))
-        AND (@activityType = "" OR activity_type = @activityType)
-        AND (@leadType = "" OR lead_type = @leadType)
+      FROM ${table("state_segment_daily")}
+      WHERE event_date BETWEEN @startDate::date AND @endDate::date
+        AND ('__ALL__' = ANY(@states) OR state = ANY(@states))
+        AND ('__ALL__' = ANY(@segments) OR segment = ANY(@segments))
+        AND ('__ALL__' = ANY(@channelGroups) OR channel_group_name = ANY(@channelGroups))
+        AND (@activityType = '' OR activity_type = @activityType)
+        AND (@leadType = '' OR lead_type = @leadType)
       GROUP BY ${groupByClause}
       ORDER BY ${groupByClause}
     `,
@@ -836,15 +836,15 @@ async function listStateSegmentFiltersFromDaily(
   });
 
   return cached(cacheKey, async () => {
-    const rows = await bqQuery<FilterOptionsRow>(
+    const rows = await query<FilterOptionsRow>(
       `
         WITH scoped AS (
           SELECT state, segment, channel_group_name
-          FROM \`${config.projectId}.${config.dataset}.state_segment_daily\`
-          WHERE (@startDate = "" OR event_date >= DATE(@startDate))
-            AND (@endDate = "" OR event_date <= DATE(@endDate))
-            AND (@activityType = "" OR activity_type = @activityType)
-            AND (@leadType = "" OR lead_type = @leadType)
+          FROM ${table("state_segment_daily")}
+          WHERE (@startDate = '' OR event_date >= @startDate::date)
+            AND (@endDate = '' OR event_date <= @endDate::date)
+            AND (@activityType = '' OR activity_type = @activityType)
+            AND (@leadType = '' OR lead_type = @leadType)
         )
         SELECT
           ARRAY(
@@ -898,63 +898,29 @@ export async function listPriceExplorationFilters(
   });
 
   return cached(cacheKey, async () => {
-    const rows = await bqQuery<PriceExplorationFilterOptionsRow>(
-      `
-        WITH raw AS (
-          SELECT
-            Data_State AS state,
-            ChannelGroupName AS channel_group_name,
-            LOWER(COALESCE(activitytype, '')) AS activity_type_raw,
-            LOWER(COALESCE(Leadtype, '')) AS lead_type_raw
-          FROM ${RAW_CROSS_TACTIC_TABLE}
-          WHERE Data_State IS NOT NULL
-            AND ChannelGroupName IS NOT NULL
-            AND SAFE_CAST(PriceAdjustmentPercent AS INT64) IS NOT NULL
-            AND (@startDate = "" OR DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) >= DATE(@startDate))
-            AND (@endDate = "" OR DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) <= DATE(@endDate))
-        ),
-        scoped AS (
-          SELECT
-            state,
-            channel_group_name,
-            CASE
-              WHEN activity_type_raw LIKE 'click%' THEN 'clicks'
-              WHEN activity_type_raw LIKE 'lead%' THEN 'leads'
-              WHEN activity_type_raw LIKE 'call%' THEN 'calls'
-              ELSE ''
-            END AS activity_group,
-            CASE
-              WHEN lead_type_raw LIKE '%car%' THEN 'auto'
-              WHEN lead_type_raw LIKE '%home%' THEN 'home'
-              ELSE ''
-            END AS lead_group
-          FROM raw
-        )
-        SELECT
-          ARRAY(
-            SELECT DISTINCT state
-            FROM scoped
-            WHERE state IS NOT NULL
-              AND (@activityType = "" OR activity_group = @activityType)
-              AND (@leadType = "" OR lead_group = @leadType)
-            ORDER BY state
-          ) AS states,
-          ARRAY(
-            SELECT DISTINCT channel_group_name
-            FROM scoped
-            WHERE channel_group_name IS NOT NULL
-              AND (@activityType = "" OR activity_group = @activityType)
-              AND (@leadType = "" OR lead_group = @leadType)
-            ORDER BY channel_group_name
-          ) AS channel_groups
-      `,
-      normalized
+    const stateRows = await query<{ state: string }>(
+      `SELECT DISTINCT state
+       FROM ${table("price_exploration_daily")}
+       WHERE state IS NOT NULL
+         AND (@startDate = '' OR date >= @startDate::date)
+         AND (@endDate = '' OR date <= @endDate::date)
+       ORDER BY state`,
+      { startDate: normalized.startDate, endDate: normalized.endDate }
     );
 
-    const first = rows[0];
+    const channelRows = await query<{ channel_group_name: string }>(
+      `SELECT DISTINCT channel_group_name
+       FROM ${table("price_exploration_daily")}
+       WHERE channel_group_name IS NOT NULL
+         AND (@startDate = '' OR date >= @startDate::date)
+         AND (@endDate = '' OR date <= @endDate::date)
+       ORDER BY channel_group_name`,
+      { startDate: normalized.startDate, endDate: normalized.endDate }
+    );
+
     return {
-      states: withAllStateCodes(first?.states),
-      channelGroups: unwrapBqArray<string>(first?.channel_groups)
+      states: withAllStateCodes(stateRows.map(r => r.state)),
+      channelGroups: channelRows.map(r => r.channel_group_name)
     };
   });
 }

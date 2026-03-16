@@ -3,16 +3,21 @@
  *
  * Pulls analytics data from BigQuery pre-aggregated tables
  * and streams it into the PostgreSQL runtime database.
- * Uses BQ createQueryStream() to avoid loading all rows into memory at once.
+ *
+ * Key design:
+ *   - True streaming: rows are flushed in batches of 500 during the BQ stream,
+ *     never buffering all rows in memory. Peak memory: ~100KB per table.
+ *   - Atomic table swap: inserts go into a staging table (_new), then an
+ *     atomic RENAME swaps it in. Readers never see partial data.
  *
  * Tables synced:
- *   - state_segment_daily
- *   - targets_perf_daily
- *   - price_exploration_daily
+ *   - state_segment_daily        (~1M rows / 90 days)
+ *   - targets_perf_daily         (~400K rows / 90 days)
+ *   - price_exploration_daily    (~3.2M rows / 90 days)
  */
 
 import { bigquery, table as bqTable } from "../db/bigquery.js";
-import { pgTransaction } from "../db/postgres.js";
+import { pgExec, pgWithClient, pgTransaction } from "../db/postgres.js";
 import { config } from "../config.js";
 
 type SyncTableResult = {
@@ -52,6 +57,7 @@ const PRICE_EXPLORATION_DAILY_COLS = [
   "opps", "bids", "total_impressions", "avg_position", "sold",
   "win_rate", "avg_bid", "cpc", "total_spend", "click_to_quote",
   "quote_start_rate", "number_of_quote_started", "number_of_quotes",
+  "number_of_binds",
   "stat_sig", "stat_sig_channel_group", "cpc_uplift",
   "cpc_uplift_channelgroup", "win_rate_uplift",
   "win_rate_uplift_channelgroup", "additional_clicks", "refreshed_at",
@@ -88,12 +94,18 @@ function buildInsertBatch(tableName: string, cols: readonly string[], rows: Reco
   return `INSERT INTO ${tableName} (${colList}) VALUES\n${valueSets.join(",\n")}`;
 }
 
-// ── Per-table sync (streaming) ────────────────────────────────────────
+// ── Per-table sync (true streaming + atomic swap) ────────────────────
 
 /**
- * Streams rows from BQ and inserts into PG in batches.
- * Uses createQueryStream() to avoid loading all rows into memory.
- * Wrapped in a transaction so readers never see a truncated/partial table.
+ * Streams rows from BQ into a PG staging table, then atomically swaps it in.
+ *
+ * Flow:
+ *   1. CREATE staging table (tablename_new) with same schema + indexes
+ *   2. Stream BQ rows, flushing in batches of 500 — never more than 500 rows in memory
+ *   3. Atomic RENAME: old → _old, staging → live (inside a transaction)
+ *   4. DROP the old table
+ *
+ * Readers always see either the complete old data or the complete new data.
  */
 async function syncTable(
   tableName: string,
@@ -101,31 +113,56 @@ async function syncTable(
   cols?: readonly string[],
 ): Promise<SyncTableResult> {
   const t0 = Date.now();
+  const stagingTable = `${tableName}_new`;
+  const oldTable = `${tableName}_old`;
+
   try {
     const colDefs = cols
       ?? (tableName === "targets_perf_daily" ? TARGETS_PERF_DAILY_COLS
         : tableName === "price_exploration_daily" ? PRICE_EXPLORATION_DAILY_COLS
         : STATE_SEGMENT_DAILY_COLS);
 
-    // Stream all rows from BQ first
-    const stream = bigquery.createQueryStream({ query: bqSql, useLegacySql: false });
-    const allRows: Record<string, unknown>[] = [];
-    for await (const row of stream) {
-      allRows.push(row as Record<string, unknown>);
-    }
+    // 1. Create staging table with same schema + indexes
+    await pgExec(`DROP TABLE IF EXISTS ${stagingTable}`);
+    await pgExec(`CREATE TABLE ${stagingTable} (LIKE ${tableName} INCLUDING INDEXES)`);
 
-    // TRUNCATE + INSERT inside a single transaction so readers
-    // always see either the old complete data or the new complete data.
-    await pgTransaction(async (exec) => {
-      await exec(`TRUNCATE ${tableName}`);
-      for (let i = 0; i < allRows.length; i += BATCH_SIZE) {
-        const batch = allRows.slice(i, i + BATCH_SIZE);
-        await exec(buildInsertBatch(tableName, colDefs, batch));
+    // 2. Stream from BQ and flush in batches — never buffer all rows
+    let rowCount = 0;
+    const stream = bigquery.createQueryStream({ query: bqSql, useLegacySql: false });
+
+    await pgWithClient(async (exec) => {
+      let batch: Record<string, unknown>[] = [];
+
+      for await (const row of stream) {
+        batch.push(row as Record<string, unknown>);
+        if (batch.length >= BATCH_SIZE) {
+          await exec(buildInsertBatch(stagingTable, colDefs, batch));
+          rowCount += batch.length;
+          batch = [];
+        }
+      }
+      // Flush remaining rows
+      if (batch.length > 0) {
+        await exec(buildInsertBatch(stagingTable, colDefs, batch));
+        rowCount += batch.length;
       }
     });
 
-    return { table: tableName, rows: allRows.length, ms: Date.now() - t0 };
+    // 3. Atomic swap: staging → live
+    await pgTransaction(async (exec) => {
+      // Drop any leftover old table from a previous failed swap
+      await exec(`DROP TABLE IF EXISTS ${oldTable}`);
+      await exec(`ALTER TABLE ${tableName} RENAME TO ${oldTable}`);
+      await exec(`ALTER TABLE ${stagingTable} RENAME TO ${tableName}`);
+    });
+
+    // 4. Cleanup: drop old table (outside transaction — non-critical)
+    await pgExec(`DROP TABLE IF EXISTS ${oldTable}`);
+
+    return { table: tableName, rows: rowCount, ms: Date.now() - t0 };
   } catch (err) {
+    // Cleanup staging table on failure
+    try { await pgExec(`DROP TABLE IF EXISTS ${stagingTable}`); } catch { /* ignore */ }
     const message = err instanceof Error ? err.message : String(err);
     return { table: tableName, rows: 0, ms: Date.now() - t0, error: message };
   }
@@ -136,7 +173,7 @@ async function syncTable(
 export async function syncAllFromBQ(): Promise<SyncResult> {
   const t0 = Date.now();
 
-  // Run sequentially to halve peak memory usage
+  // Run sequentially to minimize peak memory usage
   const ssd = await syncTable(
     "state_segment_daily",
     `SELECT
@@ -200,6 +237,7 @@ export async function syncAllFromBQ(): Promise<SyncResult> {
        opps, bids, total_impressions, avg_position, sold,
        win_rate, avg_bid, cpc, total_spend, click_to_quote,
        quote_start_rate, number_of_quote_started, number_of_quotes,
+       number_of_binds,
        stat_sig, stat_sig_channel_group, cpc_uplift,
        cpc_uplift_channelgroup, win_rate_uplift,
        win_rate_uplift_channelgroup, additional_clicks,

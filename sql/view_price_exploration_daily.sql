@@ -14,7 +14,8 @@ WITH base AS (
     SAFE_CAST(bid_price AS FLOAT64) AS bid_price,
     SAFE_CAST(Price AS FLOAT64) AS price,
     SAFE_CAST(AutoOnlineQuotesStart AS FLOAT64) AS quote_started,
-    SAFE_CAST(TotalQuotes AS FLOAT64) AS total_quotes
+    SAFE_CAST(TotalQuotes AS FLOAT64) AS total_quotes,
+    SAFE_CAST(TotalBinds AS FLOAT64) AS total_binds
   FROM `crblx-beacon-prod.Custom_Reports.Cross Tactic Analysis Full Data `
   WHERE Data_State IS NOT NULL
     AND ChannelGroupName IS NOT NULL
@@ -50,7 +51,8 @@ state_tp AS (
       NULLIF(SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)), 0)
     ) AS quote_start_rate,
     SUM(COALESCE(quote_started, 0)) AS number_of_quote_started,
-    SUM(COALESCE(total_quotes, 0)) AS number_of_quotes
+    SUM(COALESCE(total_quotes, 0)) AS number_of_quotes,
+    SUM(COALESCE(total_binds, 0)) AS number_of_binds
   FROM base
   GROUP BY 1, 2, 3, 4
 ),
@@ -77,6 +79,8 @@ joined AS (
     c.channel_sold,
     c.channel_win_rate,
     c.channel_cpc,
+    -- channel_ex_bids: channel bids excluding this state (for 600-bid threshold)
+    (c.channel_bids - s.bids) AS channel_ex_bids,
     cb.channel_win_rate AS channel_baseline_win_rate,
     cb.channel_cpc AS channel_baseline_cpc,
     cb.channel_bids AS channel_baseline_bids,
@@ -95,33 +99,6 @@ joined AS (
     ON cb.event_date = s.event_date
    AND cb.channel_group_name = s.channel_group_name
    AND cb.price_adjustment_percent = 0
-),
-scored AS (
-  SELECT
-    *,
-    SAFE_DIVIDE(
-      win_rate - baseline_win_rate,
-      SQRT(
-        SAFE_DIVIDE(
-          (sold + baseline_sold),
-          NULLIF((bids + baseline_bids), 0)
-        )
-        * (1 - SAFE_DIVIDE((sold + baseline_sold), NULLIF((bids + baseline_bids), 0)))
-        * (SAFE_DIVIDE(1, NULLIF(bids, 0)) + SAFE_DIVIDE(1, NULLIF(baseline_bids, 0)))
-      )
-    ) AS z_state,
-    SAFE_DIVIDE(
-      channel_win_rate - channel_baseline_win_rate,
-      SQRT(
-        SAFE_DIVIDE(
-          (channel_sold + channel_baseline_sold),
-          NULLIF((channel_bids + channel_baseline_bids), 0)
-        )
-        * (1 - SAFE_DIVIDE((channel_sold + channel_baseline_sold), NULLIF((channel_bids + channel_baseline_bids), 0)))
-        * (SAFE_DIVIDE(1, NULLIF(channel_bids, 0)) + SAFE_DIVIDE(1, NULLIF(channel_baseline_bids, 0)))
-      )
-    ) AS z_channel
-  FROM joined
 )
 SELECT
   event_date AS date,
@@ -142,19 +119,20 @@ SELECT
   quote_start_rate,
   number_of_quote_started,
   number_of_quotes,
+  number_of_binds,
 
+  -- stat_sig: bid-count thresholds matching live PE query
   CASE
     WHEN price_adjustment_percent = 0 THEN 'baseline'
-    WHEN ABS(z_state) >= 2.58 THEN 'high'
-    WHEN ABS(z_state) >= 1.96 THEN 'mid'
-    ELSE 'low'
+    WHEN bids >= 200 THEN 'state'
+    WHEN bids >= 50 AND COALESCE(channel_ex_bids, 0) >= 600 THEN 'channel'
+    ELSE 'disqualified'
   END AS stat_sig,
 
   CASE
     WHEN price_adjustment_percent = 0 THEN 'baseline'
-    WHEN ABS(z_channel) >= 2.58 THEN 'high'
-    WHEN ABS(z_channel) >= 1.96 THEN 'mid'
-    ELSE 'low'
+    WHEN channel_bids >= 200 THEN 'state'
+    ELSE 'disqualified'
   END AS stat_sig_channel_group,
 
   CASE
@@ -177,16 +155,18 @@ SELECT
     ELSE SAFE_DIVIDE(channel_win_rate - channel_baseline_win_rate, NULLIF(channel_baseline_win_rate, 0))
   END AS win_rate_uplift_channelgroup,
 
+  -- additional_clicks: uses bid-count stat_sig
   CASE
     WHEN price_adjustment_percent = 0 THEN NULL
     ELSE (
       (
         CASE
-          WHEN ABS(z_state) >= 1.96 THEN win_rate
-          ELSE channel_win_rate
+          WHEN bids >= 200 THEN win_rate
+          WHEN bids >= 50 AND COALESCE(channel_ex_bids, 0) >= 600 THEN channel_win_rate
+          ELSE win_rate
         END
         - baseline_win_rate
       ) * bids
     )
   END AS additional_clicks
-FROM scored;
+FROM joined;

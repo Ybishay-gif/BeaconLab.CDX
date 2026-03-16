@@ -210,6 +210,7 @@ CREATE TABLE IF NOT EXISTS price_exploration_daily (
   quote_start_rate DOUBLE PRECISION,
   number_of_quote_started DOUBLE PRECISION,
   number_of_quotes DOUBLE PRECISION,
+  number_of_binds DOUBLE PRECISION,
   stat_sig TEXT,
   stat_sig_channel_group TEXT,
   cpc_uplift DOUBLE PRECISION,
@@ -289,3 +290,17 @@ CREATE TABLE IF NOT EXISTS reports (
 );
 CREATE INDEX idx_reports_user ON reports(user_id, created_at DESC);
 CREATE INDEX idx_reports_status ON reports(status);
+
+-- ── Report Templates ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS report_templates (
+  template_id      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  template_name    TEXT NOT NULL,
+  user_id          TEXT NOT NULL,
+  fixed_filters    JSONB NOT NULL DEFAULT '{}',
+  dynamic_filters  JSONB NOT NULL DEFAULT '[]',
+  selected_columns JSONB NOT NULL DEFAULT '[]',
+  include_opps     BOOLEAN NOT NULL DEFAULT false,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_report_templates_user ON report_templates(user_id, created_at DESC);
