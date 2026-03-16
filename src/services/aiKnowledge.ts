@@ -464,7 +464,10 @@ Each state+channel+testing_point is classified:
 1. **baseline** (testing_point = 0): Reference point, no uplifts
 2. **state** (bids ≥ 200): High confidence — uses state-level WR and CPC uplifts directly. Confidence multiplier = 1.0
 3. **channel** (50–199 bids AND channel_ex_bids ≥ 600): Medium confidence — uses blended uplifts (weighted average of state + channel signals, weighted by bid counts). Confidence multiplier = 0.85
-4. **disqualified** (bids < 50 OR channel_ex_bids < 600): Insufficient data — excluded from recommendations
+4. **disqualified** (bids < 50 OR channel_ex_bids < 600): Insufficient data — excluded from automated recommendations only
+
+**IMPORTANT**: The stat_sig filter applies ONLY when calculating automated recommendations (e.g., additional binds estimates in Pattern 6).
+For exploratory questions like "which TP has the highest WR uplift" or "show me PE data for state X", do NOT filter by stat_sig — return ALL testing points and include the stat_sig column so the user can see confidence levels. Show bids and sold counts so the user can judge data quality themselves.
 
 ### Blended Channel Uplifts (stat_sig = 'channel')
 When a state has 50–199 bids:
@@ -653,6 +656,8 @@ If the user hasn't specified a plan_id, you can omit the plan_id filter or ask.
 ## Pattern 5 — Price Exploration by State + Channel
 **IMPORTANT**: \`channel_group_name\` in PE often includes the segment (e.g., "Group 100 MCH"). Use ILIKE for matching.
 **DO NOT** use activity_type, lead_type, or segment filters on this table — those columns do not exist.
+**DO NOT** filter by stat_sig here — this is an exploratory query. Include stat_sig, bids, and sold in the output so the user can assess confidence.
+When the user asks "which TP has the highest WR uplift", return the top results by win_rate_uplift with no stat_sig filter, but require a minimum volume (e.g., bids >= 50 AND sold >= 5) to avoid noise from single-bid rows.
 \`\`\`sql
 SELECT
   state,
@@ -716,7 +721,7 @@ pe_additional AS (
     SUM(additional_clicks) AS total_additional_clicks
   FROM price_exploration_daily
   WHERE price_adjustment_percent != 0
-    AND stat_sig IN ('state', 'channel')
+    AND stat_sig IN ('state', 'channel')  -- stat_sig filter ONLY for additional binds estimates, NOT for exploratory queries
   GROUP BY state
   HAVING SUM(additional_clicks) > 0
 )
