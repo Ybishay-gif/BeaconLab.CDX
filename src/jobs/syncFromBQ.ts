@@ -25,6 +25,9 @@ import { cacheClear } from "../cache.js";
 import { snapshotSuggestedCpb } from "./snapshotSuggestedCpb.js";
 import { config } from "../config.js";
 
+const MAX_RETRIES = 1;
+const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || "";
+
 const storage = new Storage();
 const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
 
@@ -96,6 +99,17 @@ export function startSyncInBackground(): { started: boolean; message: string } {
       syncStatus.completedAt = new Date().toISOString();
       cacheClear();
       console.log(`[sync] completed in ${result.totalMs}ms — cache cleared`);
+
+      // Alert on partial or full failure
+      const failed = result.tables.filter(t => t.error);
+      if (failed.length > 0) {
+        const details = failed.map(t => `• ${t.table}: ${t.error}`).join("\n");
+        await notifySlack(`:warning: *BQ→PG sync partial failure* (${result.totalMs}ms)\n${details}`);
+      } else {
+        const summary = result.tables.map(t => `• ${t.table}: ${t.rows.toLocaleString()} rows (${t.ms}ms)`).join("\n");
+        await notifySlack(`:white_check_mark: *BQ→PG sync complete* (${result.totalMs}ms)\n${summary}`);
+      }
+
       try {
         await snapshotSuggestedCpb();
         console.log(`[sync] suggested CPB snapshot complete`);
@@ -103,11 +117,12 @@ export function startSyncInBackground(): { started: boolean; message: string } {
         console.error(`[sync] suggested CPB snapshot failed:`, e);
       }
     })
-    .catch((err) => {
+    .catch(async (err) => {
       syncStatus.error = err instanceof Error ? err.message : String(err);
       syncStatus.running = false;
       syncStatus.completedAt = new Date().toISOString();
       console.error(`[sync] failed:`, err);
+      await notifySlack(`:x: *BQ→PG sync crashed*: ${syncStatus.error}`);
     });
 
   return { started: true, message: "Sync started in background" };
@@ -263,7 +278,36 @@ async function cloudSqlImportCsv(
   }
 }
 
+// ── Slack alerting ─────────────────────────────────────────────────────
+
+async function notifySlack(message: string): Promise<void> {
+  if (!SLACK_WEBHOOK_URL) return;
+  try {
+    await fetch(SLACK_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: message }),
+    });
+  } catch (err) {
+    console.error("[sync] Slack notification failed:", err);
+  }
+}
+
 // ── Per-table sync ─────────────────────────────────────────────────────
+
+async function syncTableWithRetry(
+  tableName: string,
+  bqSql: string,
+  cols: readonly string[],
+): Promise<SyncTableResult> {
+  let result = await syncTable(tableName, bqSql, cols);
+  for (let attempt = 1; attempt <= MAX_RETRIES && result.error; attempt++) {
+    console.log(`[sync] ${tableName}: retry ${attempt}/${MAX_RETRIES}...`);
+    await new Promise(r => setTimeout(r, 5000));
+    result = await syncTable(tableName, bqSql, cols);
+  }
+  return result;
+}
 
 async function syncTable(
   tableName: string,
@@ -336,7 +380,7 @@ export async function syncAllFromBQ(): Promise<SyncResult> {
   // Sequential: Cloud SQL only supports one import operation at a time
   console.log("[sync] starting sync (BQ → GCS → Cloud SQL Import)...");
 
-  const ssd = await syncTable(
+  const ssd = await syncTableWithRetry(
     "state_segment_daily",
     `SELECT
        event_date, state, segment, channel_group_name, activity_type,
@@ -349,7 +393,7 @@ export async function syncAllFromBQ(): Promise<SyncResult> {
     STATE_SEGMENT_DAILY_COLS,
   );
 
-  const tpd = await syncTable(
+  const tpd = await syncTableWithRetry(
     "targets_perf_daily",
       `SELECT
          DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) AS event_date,
@@ -391,7 +435,7 @@ export async function syncAllFromBQ(): Promise<SyncResult> {
     TARGETS_PERF_DAILY_COLS,
   );
 
-  const ped = await syncTable(
+  const ped = await syncTableWithRetry(
     "price_exploration_daily",
     `SELECT
        date, channel_group_name, state, activity_type, lead_type,
