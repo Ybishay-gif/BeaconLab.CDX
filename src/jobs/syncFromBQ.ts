@@ -5,10 +5,13 @@
  * and streams it into the PostgreSQL runtime database.
  *
  * Key design:
- *   - True streaming: rows are flushed in batches of 500 during the BQ stream,
- *     never buffering all rows in memory. Peak memory: ~100KB per table.
+ *   - Fire-and-forget: POST /admin/sync-from-bq returns 202 immediately.
+ *     The sync runs as a background async task — no HTTP timeout dependency.
+ *   - True streaming: rows are flushed in batches of 2000, never buffering
+ *     all rows in memory. Peak memory: ~400KB per table.
  *   - Atomic table swap: inserts go into a staging table (_new), then an
  *     atomic RENAME swaps it in. Readers never see partial data.
+ *   - Progress tracking: GET /admin/sync-status returns per-table row counts.
  *
  * Tables synced:
  *   - state_segment_daily        (~1M rows / 90 days)
@@ -18,6 +21,8 @@
 
 import { bigquery, table as bqTable } from "../db/bigquery.js";
 import { pgExec, pgWithClient, pgTransaction } from "../db/postgres.js";
+import { cacheClear } from "../cache.js";
+import { snapshotSuggestedCpb } from "./snapshotSuggestedCpb.js";
 import { config } from "../config.js";
 
 type SyncTableResult = {
@@ -33,7 +38,76 @@ type SyncResult = {
   tables: SyncTableResult[];
 };
 
-const BATCH_SIZE = 500;
+// ── Sync status (module-level singleton) ─────────────────────────────
+
+type SyncStatus = {
+  running: boolean;
+  startedAt: string | null;
+  completedAt: string | null;
+  result: SyncResult | null;
+  error: string | null;
+  progress: Record<string, { rows: number; done: boolean }>;
+};
+
+let syncStatus: SyncStatus = {
+  running: false,
+  startedAt: null,
+  completedAt: null,
+  result: null,
+  error: null,
+  progress: {},
+};
+
+export function getSyncStatus(): SyncStatus {
+  return { ...syncStatus, progress: { ...syncStatus.progress } };
+}
+
+/**
+ * Kicks off the BQ→PG sync in the background.
+ * Returns immediately — poll GET /admin/sync-status for progress.
+ */
+export function startSyncInBackground(): { started: boolean; message: string } {
+  if (syncStatus.running) {
+    return { started: false, message: "Sync already running" };
+  }
+
+  syncStatus = {
+    running: true,
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+    result: null,
+    error: null,
+    progress: {},
+  };
+
+  // Fire and forget — no await
+  syncAllFromBQ()
+    .then(async (result) => {
+      syncStatus.result = result;
+      syncStatus.running = false;
+      syncStatus.completedAt = new Date().toISOString();
+      // Clear analytics cache now that fresh data is in PG
+      cacheClear();
+      console.log(`[sync] completed in ${result.totalMs}ms — cache cleared`);
+      // Chain: snapshot suggested CPB after fresh data is available
+      try {
+        await snapshotSuggestedCpb();
+        console.log(`[sync] suggested CPB snapshot complete`);
+      } catch (e) {
+        console.error(`[sync] suggested CPB snapshot failed:`, e);
+      }
+    })
+    .catch((err) => {
+      syncStatus.error = err instanceof Error ? err.message : String(err);
+      syncStatus.running = false;
+      syncStatus.completedAt = new Date().toISOString();
+      console.error(`[sync] failed:`, err);
+    });
+
+  return { started: true, message: "Sync started in background" };
+}
+
+const BATCH_SIZE = 2000;
 
 // ── Column definitions for each synced table ─────────────────────────
 
@@ -128,7 +202,9 @@ async function syncTable(
 
     // 2. Stream from BQ and flush in batches — never buffer all rows
     let rowCount = 0;
+    syncStatus.progress[tableName] = { rows: 0, done: false };
     const stream = bigquery.createQueryStream({ query: bqSql, useLegacySql: false });
+    console.log(`[sync] ${tableName}: starting BQ stream...`);
 
     await pgWithClient(async (exec) => {
       let batch: Record<string, unknown>[] = [];
@@ -138,7 +214,11 @@ async function syncTable(
         if (batch.length >= BATCH_SIZE) {
           await exec(buildInsertBatch(stagingTable, colDefs, batch));
           rowCount += batch.length;
+          syncStatus.progress[tableName] = { rows: rowCount, done: false };
           batch = [];
+          if (rowCount % 50000 === 0) {
+            console.log(`[sync] ${tableName}: ${rowCount.toLocaleString()} rows inserted...`);
+          }
         }
       }
       // Flush remaining rows
@@ -147,6 +227,8 @@ async function syncTable(
         rowCount += batch.length;
       }
     });
+    syncStatus.progress[tableName] = { rows: rowCount, done: true };
+    console.log(`[sync] ${tableName}: ${rowCount.toLocaleString()} rows total, swapping...`);
 
     // 3. Atomic swap: staging → live
     await pgTransaction(async (exec) => {

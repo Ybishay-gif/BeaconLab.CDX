@@ -13,7 +13,7 @@ import {
   listStateSegmentFilters
 } from "../../services/analyticsService.js";
 import { listPlans } from "../../services/plansService.js";
-import { syncAllFromBQ } from "../../jobs/syncFromBQ.js";
+import { startSyncInBackground, getSyncStatus } from "../../jobs/syncFromBQ.js";
 import { snapshotSuggestedCpb } from "../../jobs/snapshotSuggestedCpb.js";
 import { parseOptionalNumber, parseQueryArray } from "./queryParsers.js";
 import { cacheClear, cacheStats } from "../../cache.js";
@@ -117,20 +117,17 @@ adminRoutes.post("/admin/warm-cache", requireAdminOrScheduler, async (_req, res)
   }
 });
 
-// BQ → PG sync — called by Cloud Scheduler daily (or manually by admins).
-// Also triggers the suggested-CPB snapshot after sync completes.
-// Clears the analytics BQ cache so next request gets fresh data.
-adminRoutes.post("/admin/sync-from-bq", requireAdminOrScheduler, async (_req, res) => {
-  try {
-    const syncResult = await syncAllFromBQ();
-    // Chain: snapshot suggested CPB into BQ after fresh perf data is available
-    const snapshotResult = await snapshotSuggestedCpb();
-    // Clear analytics BQ cache — fresh data now available
-    cacheClear();
-    res.json({ ...syncResult, suggestedCpbSnapshot: snapshotResult, cacheCleared: true });
-  } catch (error) {
-    res.status(500).json({ error: "Sync failed", detail: String(error) });
-  }
+// BQ → PG sync — fire-and-forget. Returns 202 immediately.
+// The sync streams data in the background — no HTTP timeout dependency.
+// Poll GET /admin/sync-status for progress.
+adminRoutes.post("/admin/sync-from-bq", requireAdminOrScheduler, (_req, res) => {
+  const result = startSyncInBackground();
+  res.status(result.started ? 202 : 409).json(result);
+});
+
+// Sync progress — returns per-table row counts and completion status.
+adminRoutes.get("/admin/sync-status", requireAdminOrScheduler, (_req, res) => {
+  res.json(getSyncStatus());
 });
 
 // Cache diagnostics
