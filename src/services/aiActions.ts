@@ -145,6 +145,8 @@ export interface ActionPlanContext {
   activityLeadType?: string;
   perfStartDate?: string;
   perfEndDate?: string;
+  priceStartDate?: string;
+  priceEndDate?: string;
   qbcClicks?: number;
   qbcLeadsCalls?: number;
 }
@@ -408,10 +410,14 @@ async function handleGetPriceExplorationData(
     ? (planContext.qbcClicks ?? 0)
     : (planContext.qbcLeadsCalls ?? 0);
 
+  // Use price exploration dates (preferred), fall back to performance dates
+  const peStartDate = planContext.priceStartDate || planContext.perfStartDate;
+  const peEndDate = planContext.priceEndDate || planContext.perfEndDate;
+
   const filters: PriceExplorationFilters = {
     planId: planContext.planId,
-    startDate: planContext.perfStartDate,
-    endDate: planContext.perfEndDate,
+    startDate: peStartDate,
+    endDate: peEndDate,
     activityLeadType: planContext.activityLeadType,
     qbc,
     states: states.length > 0 ? states : undefined,
@@ -461,7 +467,7 @@ async function handleGetPriceExplorationData(
     return {
       response: {
         plan_id: planContext.planId,
-        date_range: `${planContext.perfStartDate} to ${planContext.perfEndDate}`,
+        date_range: `${peStartDate} to ${peEndDate}`,
         activity_lead_type: planContext.activityLeadType,
         qbc,
         total_state_channel_pairs: resultRows.length,

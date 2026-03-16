@@ -13,6 +13,8 @@ const planContextSchema = z.object({
   activityLeadType: z.string().optional(),
   perfStartDate: z.string().optional(),
   perfEndDate: z.string().optional(),
+  priceStartDate: z.string().optional(),
+  priceEndDate: z.string().optional(),
   qbcClicks: z.number().optional(),
   qbcLeadsCalls: z.number().optional(),
 }).optional();

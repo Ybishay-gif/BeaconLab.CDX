@@ -200,6 +200,8 @@ export interface PlanContext {
   activityLeadType?: string;
   perfStartDate?: string;
   perfEndDate?: string;
+  priceStartDate?: string;
+  priceEndDate?: string;
   qbcClicks?: number;
   qbcLeadsCalls?: number;
 }

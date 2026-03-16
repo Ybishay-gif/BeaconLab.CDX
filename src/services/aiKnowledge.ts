@@ -16,6 +16,8 @@ interface PlanContextInput {
   activityLeadType?: string;
   perfStartDate?: string;
   perfEndDate?: string;
+  priceStartDate?: string;
+  priceEndDate?: string;
   qbcClicks?: number;
   qbcLeadsCalls?: number;
 }
@@ -54,6 +56,14 @@ function buildPlanContextSection(ctx: PlanContextInput): string {
   if (ctx.perfStartDate && ctx.perfEndDate) {
     lines.push(`**Performance Date Range**: ${ctx.perfStartDate} to ${ctx.perfEndDate}`);
     lines.push(`→ When querying \`state_segment_daily\`, add: \`AND event_date BETWEEN '${ctx.perfStartDate}' AND '${ctx.perfEndDate}'\``);
+    lines.push("");
+  }
+
+  // Price Exploration date range (may differ from performance dates)
+  if (ctx.priceStartDate && ctx.priceEndDate) {
+    lines.push(`**Price Exploration Date Range**: ${ctx.priceStartDate} to ${ctx.priceEndDate}`);
+    lines.push(`→ The get_price_exploration_data tool automatically uses this date range. When querying \`price_exploration_daily\` directly, add: \`AND date BETWEEN '${ctx.priceStartDate}' AND '${ctx.priceEndDate}'\``);
+    lines.push(`→ **NOTE**: This may differ from the Performance Date Range. Always use the PE date range for price exploration queries.`);
     lines.push("");
   }
 
