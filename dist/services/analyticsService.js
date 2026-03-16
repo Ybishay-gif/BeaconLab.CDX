@@ -1,4 +1,4 @@
-import { query, table, bqQuery, bqAnalyticsTable, bqAnalyticsRoutine } from "../db/index.js";
+import { query, table } from "../db/index.js";
 import { config } from "../config.js";
 import { normalizeActivityScopeKey, splitCombinedFilter } from "./shared/activityScope.js";
 import { buildCombinedRatioSql, buildRoeSql } from "./shared/kpiSql.js";
@@ -390,7 +390,7 @@ async function getStateSegmentPerformanceFromDaily(filters, normalized) {
         qbc: normalized.qbc,
         groupBy: filters.groupBy || "state_segment_channel"
     });
-    return cached(cacheKey, () => bqQuery(`
+    return cached(cacheKey, () => query(`
       SELECT
         ${selectDims},
         SUM(bids) AS bids,
@@ -438,13 +438,13 @@ async function getStateSegmentPerformanceFromDaily(filters, normalized) {
         SUM(lifetime_cost_sum) AS lifetime_cost_sum,
         SUM(lifetime_premium_sum) AS lifetime_premium_sum,
         SUM(avg_mrltv_sum) AS avg_mrltv_sum
-      FROM \`${config.projectId}.${config.dataset}.state_segment_daily\`
-      WHERE event_date BETWEEN DATE(@startDate) AND DATE(@endDate)
-        AND ("__ALL__" IN UNNEST(@states) OR state IN UNNEST(@states))
-        AND ("__ALL__" IN UNNEST(@segments) OR segment IN UNNEST(@segments))
-        AND ("__ALL__" IN UNNEST(@channelGroups) OR channel_group_name IN UNNEST(@channelGroups))
-        AND (@activityType = "" OR activity_type = @activityType)
-        AND (@leadType = "" OR lead_type = @leadType)
+      FROM ${table("state_segment_daily")}
+      WHERE event_date BETWEEN @startDate::date AND @endDate::date
+        AND ('__ALL__' = ANY(@states) OR state = ANY(@states))
+        AND ('__ALL__' = ANY(@segments) OR segment = ANY(@segments))
+        AND ('__ALL__' = ANY(@channelGroups) OR channel_group_name = ANY(@channelGroups))
+        AND (@activityType = '' OR activity_type = @activityType)
+        AND (@leadType = '' OR lead_type = @leadType)
       GROUP BY ${groupByClause}
       ORDER BY ${groupByClause}
     `, normalized));
@@ -457,14 +457,14 @@ async function listStateSegmentFiltersFromDaily(normalized) {
         leadType: normalized.leadType
     });
     return cached(cacheKey, async () => {
-        const rows = await bqQuery(`
+        const rows = await query(`
         WITH scoped AS (
           SELECT state, segment, channel_group_name
-          FROM \`${config.projectId}.${config.dataset}.state_segment_daily\`
-          WHERE (@startDate = "" OR event_date >= DATE(@startDate))
-            AND (@endDate = "" OR event_date <= DATE(@endDate))
-            AND (@activityType = "" OR activity_type = @activityType)
-            AND (@leadType = "" OR lead_type = @leadType)
+          FROM ${table("state_segment_daily")}
+          WHERE (@startDate = '' OR event_date >= @startDate::date)
+            AND (@endDate = '' OR event_date <= @endDate::date)
+            AND (@activityType = '' OR activity_type = @activityType)
+            AND (@leadType = '' OR lead_type = @leadType)
         )
         SELECT
           ARRAY(
@@ -507,64 +507,33 @@ export async function listPriceExplorationFilters(filters) {
         leadType: normalized.leadType
     });
     return cached(cacheKey, async () => {
-        const rows = await bqQuery(`
-        WITH raw AS (
-          SELECT
-            Data_State AS state,
-            ChannelGroupName AS channel_group_name,
-            LOWER(COALESCE(activitytype, '')) AS activity_type_raw,
-            LOWER(COALESCE(Leadtype, '')) AS lead_type_raw
-          FROM ${RAW_CROSS_TACTIC_TABLE}
-          WHERE Data_State IS NOT NULL
-            AND ChannelGroupName IS NOT NULL
-            AND SAFE_CAST(PriceAdjustmentPercent AS INT64) IS NOT NULL
-            AND (@startDate = "" OR DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) >= DATE(@startDate))
-            AND (@endDate = "" OR DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) <= DATE(@endDate))
-        ),
-        scoped AS (
-          SELECT
-            state,
-            channel_group_name,
-            CASE
-              WHEN activity_type_raw LIKE 'click%' THEN 'clicks'
-              WHEN activity_type_raw LIKE 'lead%' THEN 'leads'
-              WHEN activity_type_raw LIKE 'call%' THEN 'calls'
-              ELSE ''
-            END AS activity_group,
-            CASE
-              WHEN lead_type_raw LIKE '%car%' THEN 'auto'
-              WHEN lead_type_raw LIKE '%home%' THEN 'home'
-              ELSE ''
-            END AS lead_group
-          FROM raw
-        )
-        SELECT
-          ARRAY(
-            SELECT DISTINCT state
-            FROM scoped
-            WHERE state IS NOT NULL
-              AND (@activityType = "" OR activity_group = @activityType)
-              AND (@leadType = "" OR lead_group = @leadType)
-            ORDER BY state
-          ) AS states,
-          ARRAY(
-            SELECT DISTINCT channel_group_name
-            FROM scoped
-            WHERE channel_group_name IS NOT NULL
-              AND (@activityType = "" OR activity_group = @activityType)
-              AND (@leadType = "" OR lead_group = @leadType)
-            ORDER BY channel_group_name
-          ) AS channel_groups
-      `, normalized);
-        const first = rows[0];
+        const stateRows = await query(`SELECT DISTINCT state
+       FROM ${table("price_exploration_daily")}
+       WHERE state IS NOT NULL
+         AND (@startDate = '' OR date >= @startDate::date)
+         AND (@endDate = '' OR date <= @endDate::date)
+         AND (@activityType = '' OR activity_type = @activityType)
+         AND (@leadType = '' OR lead_type = @leadType)
+       ORDER BY state`, { startDate: normalized.startDate, endDate: normalized.endDate,
+            activityType: normalized.activityType, leadType: normalized.leadType });
+        const channelRows = await query(`SELECT DISTINCT channel_group_name
+       FROM ${table("price_exploration_daily")}
+       WHERE channel_group_name IS NOT NULL
+         AND (@startDate = '' OR date >= @startDate::date)
+         AND (@endDate = '' OR date <= @endDate::date)
+         AND (@activityType = '' OR activity_type = @activityType)
+         AND (@leadType = '' OR lead_type = @leadType)
+       ORDER BY channel_group_name`, { startDate: normalized.startDate, endDate: normalized.endDate,
+            activityType: normalized.activityType, leadType: normalized.leadType });
         return {
-            states: withAllStateCodes(first?.states),
-            channelGroups: unwrapBqArray(first?.channel_groups)
+            states: withAllStateCodes(stateRows.map(r => r.state)),
+            channelGroups: channelRows.map(r => r.channel_group_name)
         };
     });
 }
 /**
- * Cached BQ-only portion of Price Exploration.
+ * Price Exploration data from PG tables.
+ * Reads from price_exploration_daily + state_segment_daily (both synced daily from BQ).
  * Returns raw rows with SQL-level recommended_testing_point (basic cpb_uplift heuristic).
  * Strategy rules and PE decisions are applied AFTER this function returns, so
  * user changes take effect immediately without cache invalidation.
@@ -583,137 +552,54 @@ async function getPriceExplorationBQ(normalized) {
         limit: normalized.limit,
         topPairs: normalized.topPairs
     });
-    return cached(cacheKey, () => bqQuery(`
-      WITH raw_all AS (
-        SELECT
-          ChannelGroupName AS channel_group_name,
-          Data_State AS state,
-          SAFE_CAST(PriceAdjustmentPercent AS INT64) AS price_adjustment_percent,
-          Lead_LeadID,
-          SAFE_CAST(bid_count AS FLOAT64) AS bid_count,
-          SAFE_CAST(ExtraBidData_ReturnedAdsCount AS FLOAT64) AS returned_ads_count,
-          SAFE_CAST(ExtraBidData_OriginalAdData_Position AS FLOAT64) AS ad_position,
-          SAFE_CAST(Transaction_sold AS FLOAT64) AS transaction_sold,
-          SAFE_CAST(TransactionSold AS FLOAT64) AS transaction_sold_alt,
-          SAFE_CAST(bid_price AS FLOAT64) AS bid_price,
-          SAFE_CAST(Price AS FLOAT64) AS price,
-          SAFE_CAST(AutoOnlineQuotesStart AS FLOAT64) AS quote_started,
-          SAFE_CAST(TotalQuotes AS FLOAT64) AS total_quotes,
-          SAFE_CAST(TotalBinds AS FLOAT64) AS total_binds,
-          SAFE_CAST(ScoredPolicies AS FLOAT64) AS scored_policies,
-          SAFE_CAST(Target_TargetCPB AS FLOAT64) AS target_cpb,
-          SAFE_CAST(CustomValues_Profit AS FLOAT64) AS avg_profit,
-          SAFE_CAST(Equity AS FLOAT64) AS avg_equity,
-          SAFE_CAST(LifetimePremium AS FLOAT64) AS lifetime_premium,
-          SAFE_CAST(LifeTimeCost AS FLOAT64) AS lifetime_cost,
-          LOWER(COALESCE(activitytype, '')) AS activity_type_raw,
-          LOWER(COALESCE(Leadtype, '')) AS lead_type_raw
-        FROM ${RAW_CROSS_TACTIC_TABLE}
-        WHERE DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) BETWEEN
-            IF(@startDate = "", DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY), DATE(@startDate))
-            AND IF(@endDate = "", CURRENT_DATE(), DATE(@endDate))
-          AND Data_State IS NOT NULL
-          AND ChannelGroupName IS NOT NULL
-          AND SAFE_CAST(PriceAdjustmentPercent AS INT64) IS NOT NULL
-          AND ("__ALL__" IN UNNEST(@channelGroups) OR ChannelGroupName IN UNNEST(@channelGroups))
-      ),
-      base_all AS (
+    return cached(cacheKey, () => query(`
+      WITH
+      /* ═══════════════════════════════════════════════════════════════
+         Part A: PE metrics from price_exploration_daily
+         Aggregate daily rows across date range
+         ═══════════════════════════════════════════════════════════════ */
+
+      -- All states (for channel-level metrics), filtered by activity/lead/channel/date
+      pe_all AS (
         SELECT
           channel_group_name,
           state,
+          activity_type AS activity_group,
+          lead_type AS lead_group,
           price_adjustment_percent,
-          Lead_LeadID,
-          bid_count,
-          returned_ads_count,
-          ad_position,
-          transaction_sold,
-          transaction_sold_alt,
-          bid_price,
-          price,
-          quote_started,
-          total_quotes,
-          total_binds,
-          scored_policies,
-          target_cpb,
-          avg_profit,
-          avg_equity,
-          lifetime_premium,
-          lifetime_cost,
-          CASE
-            WHEN activity_type_raw LIKE 'click%' THEN 'clicks'
-            WHEN activity_type_raw LIKE 'lead%' THEN 'leads'
-            WHEN activity_type_raw LIKE 'call%' THEN 'calls'
-            ELSE ''
-          END AS activity_group,
-          CASE
-            WHEN lead_type_raw LIKE '%car%' THEN 'auto'
-            WHEN lead_type_raw LIKE '%home%' THEN 'home'
-            ELSE ''
-          END AS lead_group
-        FROM raw_all
-        WHERE (@activityType = "" OR (
-          CASE
-            WHEN activity_type_raw LIKE 'click%' THEN 'clicks'
-            WHEN activity_type_raw LIKE 'lead%' THEN 'leads'
-            WHEN activity_type_raw LIKE 'call%' THEN 'calls'
-            ELSE ''
-          END
-        ) = @activityType)
-          AND (@leadType = "" OR (
-            CASE
-              WHEN lead_type_raw LIKE '%car%' THEN 'auto'
-              WHEN lead_type_raw LIKE '%home%' THEN 'home'
-              ELSE ''
-            END
-          ) = @leadType)
-      ),
-      base_filtered AS (
-        SELECT *
-        FROM base_all
-        WHERE ("__ALL__" IN UNNEST(@states) OR state IN UNNEST(@states))
-      ),
-      state_tp AS (
-        SELECT
-          channel_group_name,
-          state,
-          activity_group,
-          lead_group,
-          price_adjustment_percent,
-          COUNT(DISTINCT Lead_LeadID) AS opps,
-          SUM(COALESCE(bid_count, 0)) AS bids,
-          SUM(COALESCE(returned_ads_count, 0)) AS total_impressions,
-          AVG(COALESCE(ad_position, 0)) AS avg_position,
-          SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)) AS sold,
-          SAFE_DIVIDE(
-            SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)),
-            NULLIF(SUM(COALESCE(bid_count, 0)), 0)
-          ) AS win_rate,
-          AVG(COALESCE(bid_price, 0)) AS avg_bid,
-          SAFE_DIVIDE(
-            SUM(COALESCE(price, 0)),
-            NULLIF(SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)), 0)
-          ) AS cpc,
-          SUM(COALESCE(price, 0)) AS total_spend,
-          SAFE_DIVIDE(
-            SUM(COALESCE(total_quotes, 0)),
-            NULLIF(SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)), 0)
-          ) AS click_to_quote,
-          SAFE_DIVIDE(
-            SUM(COALESCE(quote_started, 0)),
-            NULLIF(SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)), 0)
-          ) AS quote_start_rate,
-          SUM(COALESCE(quote_started, 0)) AS number_of_quote_started,
-          SUM(COALESCE(total_quotes, 0)) AS number_of_quotes,
-          SUM(COALESCE(total_binds, 0)) AS number_of_binds,
-          SUM(COALESCE(scored_policies, 0)) AS scored_policies,
-          SUM(COALESCE(target_cpb, 0)) AS target_cpb_total,
-          SUM(COALESCE(avg_profit, 0)) AS avg_profit_total,
-          SUM(COALESCE(avg_equity, 0)) AS avg_equity_total,
-          SUM(COALESCE(lifetime_premium, 0)) AS lifetime_premium_total,
-          SUM(COALESCE(lifetime_cost, 0)) AS lifetime_cost_total
-        FROM base_filtered
+          SUM(opps)::bigint AS opps,
+          SUM(bids) AS bids,
+          SUM(total_impressions) AS total_impressions,
+          CASE WHEN SUM(bids) > 0 THEN SUM(avg_position * bids) / SUM(bids) ELSE 0 END AS avg_position,
+          SUM(sold) AS sold,
+          SUM(total_spend) AS total_spend,
+          CASE WHEN SUM(bids) > 0 THEN SUM(avg_bid * bids) / SUM(bids) ELSE 0 END AS avg_bid,
+          SUM(number_of_quote_started) AS number_of_quote_started,
+          SUM(number_of_quotes) AS number_of_quotes,
+          SUM(number_of_binds) AS number_of_binds
+        FROM price_exploration_daily
+        WHERE date BETWEEN
+            CASE WHEN @startDate = '' THEN CURRENT_DATE - 14 ELSE @startDate::date END
+            AND CASE WHEN @endDate = '' THEN CURRENT_DATE ELSE @endDate::date END
+          AND ('__ALL__' = ANY(@channelGroups) OR channel_group_name = ANY(@channelGroups))
+          AND (@activityType = '' OR activity_type = @activityType)
+          AND (@leadType = '' OR lead_type = @leadType)
         GROUP BY 1, 2, 3, 4, 5
       ),
+      -- State-filtered subset with computed ratios
+      state_tp AS (
+        SELECT
+          channel_group_name, state, activity_group, lead_group, price_adjustment_percent,
+          opps, bids, total_impressions, avg_position, sold, total_spend, avg_bid,
+          number_of_quote_started, number_of_quotes, number_of_binds,
+          SAFE_DIVIDE(sold, NULLIF(bids, 0)) AS win_rate,
+          SAFE_DIVIDE(total_spend, NULLIF(sold, 0)) AS cpc,
+          SAFE_DIVIDE(number_of_quotes, NULLIF(sold, 0)) AS click_to_quote,
+          SAFE_DIVIDE(number_of_quote_started, NULLIF(sold, 0)) AS quote_start_rate
+        FROM pe_all
+        WHERE ('__ALL__' = ANY(@states) OR state = ANY(@states))
+      ),
+      -- Channel aggregation from pe_all (ALL states, not just filtered)
       channel_tp AS (
         SELECT
           channel_group_name,
@@ -725,18 +611,7 @@ async function getPriceExplorationBQ(normalized) {
           SUM(total_spend) AS channel_total_spend,
           SAFE_DIVIDE(SUM(sold), NULLIF(SUM(bids), 0)) AS channel_win_rate,
           SAFE_DIVIDE(SUM(total_spend), NULLIF(SUM(sold), 0)) AS channel_cpc
-        FROM (
-          SELECT
-            channel_group_name,
-            activity_group,
-            lead_group,
-            price_adjustment_percent,
-            SUM(COALESCE(bid_count, 0)) AS bids,
-            SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)) AS sold,
-            SUM(COALESCE(price, 0)) AS total_spend
-          FROM base_all
-          GROUP BY 1, 2, 3, 4
-        )
+        FROM pe_all
         GROUP BY 1, 2, 3, 4
       ),
       joined AS (
@@ -880,61 +755,27 @@ async function getPriceExplorationBQ(normalized) {
           SAFE_DIVIDE(SUM(sold), NULLIF(SUM(bids), 0)) AS win_rate,
           SUM(sold) AS sold,
           SUM(number_of_binds) AS binds,
-          SUM(scored_policies) AS scored_policies,
-          SUM(target_cpb_total) AS target_cpb_total,
-          SUM(avg_profit_total) AS avg_profit_total,
-          SUM(avg_equity_total) AS avg_equity_total,
-          SUM(lifetime_premium_total) AS lifetime_premium_total,
-          SUM(lifetime_cost_total) AS lifetime_cost_total,
           SUM(number_of_quotes) AS quotes,
           SAFE_DIVIDE(SUM(number_of_quotes), NULLIF(SUM(bids), 0)) AS click_to_quote,
           SAFE_DIVIDE(SUM(total_spend), NULLIF(SUM(sold), 0)) AS cpc,
           SAFE_DIVIDE(SUM(avg_bid * bids), NULLIF(SUM(bids), 0)) AS avg_bid,
           SUM(total_spend) AS total_spend,
-          CASE
-            WHEN SUM(number_of_binds) = 0 THEN 0
-            ELSE SAFE_DIVIDE(SUM(target_cpb_total), SUM(number_of_binds))
-          END AS target_cpb,
+          -- Weighted uplifts across activity/lead groups
           SAFE_DIVIDE(
-            CASE
-              WHEN SUM(number_of_binds) = 0 THEN 0
-              ELSE SAFE_DIVIDE(SUM(target_cpb_total), SUM(number_of_binds))
-            END,
-            SAFE_DIVIDE(SUM(total_spend), NULLIF(SUM(number_of_binds), 0))
-          ) AS performance,
-          ${buildRoeSql({
-        zeroConditions: [
-            "SUM(scored_policies) = 0",
-            "SAFE_DIVIDE(SUM(avg_equity_total), NULLIF(SUM(scored_policies), 0)) = 0"
-        ],
-        avgProfitExpr: "SAFE_DIVIDE(SUM(avg_profit_total), NULLIF(SUM(scored_policies), 0))",
-        cpbExpr: "SAFE_DIVIDE(SUM(total_spend), NULLIF(SUM(number_of_binds), 0))",
-        avgEquityExpr: "SAFE_DIVIDE(SUM(avg_equity_total), NULLIF(SUM(scored_policies), 0))"
-    })} AS roe,
-          ${buildCombinedRatioSql({
-        zeroConditions: [
-            "SUM(scored_policies) = 0",
-            "SAFE_DIVIDE(SUM(lifetime_premium_total), NULLIF(SUM(scored_policies), 0)) = 0"
-        ],
-        cpbExpr: "SAFE_DIVIDE(SUM(total_spend), NULLIF(SUM(number_of_binds), 0))",
-        avgLifetimeCostExpr: "SAFE_DIVIDE(SUM(lifetime_cost_total), NULLIF(SUM(scored_policies), 0))",
-        avgLifetimePremiumExpr: "SAFE_DIVIDE(SUM(lifetime_premium_total), NULLIF(SUM(scored_policies), 0))"
-    })} AS combined_ratio,
-          SAFE_DIVIDE(
-            SUM(IF(win_rate_uplift_state IS NULL, 0, win_rate_uplift_state * bids)),
-            NULLIF(SUM(IF(win_rate_uplift_state IS NULL, 0, bids)), 0)
+            SUM(CASE WHEN win_rate_uplift_state IS NOT NULL THEN win_rate_uplift_state * bids ELSE 0 END),
+            NULLIF(SUM(CASE WHEN win_rate_uplift_state IS NOT NULL THEN bids ELSE 0 END), 0)
           ) AS win_rate_uplift_state,
           SAFE_DIVIDE(
-            SUM(IF(cpc_uplift_state IS NULL, 0, cpc_uplift_state * sold)),
-            NULLIF(SUM(IF(cpc_uplift_state IS NULL, 0, sold)), 0)
+            SUM(CASE WHEN cpc_uplift_state IS NOT NULL THEN cpc_uplift_state * sold ELSE 0 END),
+            NULLIF(SUM(CASE WHEN cpc_uplift_state IS NOT NULL THEN sold ELSE 0 END), 0)
           ) AS cpc_uplift_state,
           SAFE_DIVIDE(
-            SUM(IF(win_rate_uplift_channel IS NULL, 0, win_rate_uplift_channel * bids)),
-            NULLIF(SUM(IF(win_rate_uplift_channel IS NULL, 0, bids)), 0)
+            SUM(CASE WHEN win_rate_uplift_channel IS NOT NULL THEN win_rate_uplift_channel * bids ELSE 0 END),
+            NULLIF(SUM(CASE WHEN win_rate_uplift_channel IS NOT NULL THEN bids ELSE 0 END), 0)
           ) AS win_rate_uplift_channel,
           SAFE_DIVIDE(
-            SUM(IF(cpc_uplift_channel IS NULL, 0, cpc_uplift_channel * sold)),
-            NULLIF(SUM(IF(cpc_uplift_channel IS NULL, 0, sold)), 0)
+            SUM(CASE WHEN cpc_uplift_channel IS NOT NULL THEN cpc_uplift_channel * sold ELSE 0 END),
+            NULLIF(SUM(CASE WHEN cpc_uplift_channel IS NOT NULL THEN sold ELSE 0 END), 0)
           ) AS cpc_uplift_channel,
           SUM(COALESCE(additional_clicks, 0)) AS additional_clicks,
           MAX(COALESCE(channel_ex_bids, 0)) AS channel_ex_bids,
@@ -962,40 +803,39 @@ async function getPriceExplorationBQ(normalized) {
       with_expected AS (
         SELECT
           *,
-          MAX(IF(testing_point = 0, win_rate, NULL)) OVER (PARTITION BY channel_group_name, state)
+          MAX(CASE WHEN testing_point = 0 THEN win_rate END) OVER (PARTITION BY channel_group_name, state)
             AS baseline_win_rate_channel_state,
-          MAX(IF(testing_point = 0, cpc, NULL)) OVER (PARTITION BY channel_group_name, state)
+          MAX(CASE WHEN testing_point = 0 THEN cpc END) OVER (PARTITION BY channel_group_name, state)
             AS baseline_cpc_channel_state,
           (win_rate * total_bids_channel_state) AS expected_clicks,
           (win_rate * total_bids_channel_state * cpc) AS expected_total_cost,
           -- Baseline expected clicks for delta calculations
-          MAX(IF(testing_point = 0, win_rate * total_bids_channel_state, NULL))
+          MAX(CASE WHEN testing_point = 0 THEN win_rate * total_bids_channel_state END)
             OVER (PARTITION BY channel_group_name, state) AS baseline_expected_clicks,
           -- Baseline expected cost for delta calculations
-          MAX(IF(testing_point = 0, win_rate * total_bids_channel_state * cpc, NULL))
+          MAX(CASE WHEN testing_point = 0 THEN win_rate * total_bids_channel_state * cpc END)
             OVER (PARTITION BY channel_group_name, state) AS baseline_expected_cost
         FROM with_budget
       ),
-      state_channel_binds AS (
-        SELECT
-          channel_group_name,
-          state,
-          SUM(COALESCE(total_binds, 0)) AS binds_state_channel
-        FROM base_filtered
-        GROUP BY channel_group_name, state
-      ),
+      -- Financial metrics per state+channel from state_segment_daily
       state_channel_financials AS (
         SELECT
           channel_group_name,
           state,
-          SAFE_DIVIDE(SUM(COALESCE(avg_profit, 0)), NULLIF(SUM(COALESCE(scored_policies, 0)), 0)) AS avg_profit,
-          SAFE_DIVIDE(SUM(COALESCE(avg_equity, 0)), NULLIF(SUM(COALESCE(scored_policies, 0)), 0)) AS avg_equity,
+          SAFE_DIVIDE(SUM(COALESCE(avg_profit_sum, 0)), NULLIF(SUM(COALESCE(scored_policies, 0)), 0)) AS avg_profit,
+          SAFE_DIVIDE(SUM(COALESCE(avg_equity_sum, 0)), NULLIF(SUM(COALESCE(scored_policies, 0)), 0)) AS avg_equity,
           SAFE_DIVIDE(
-            SUM(COALESCE(lifetime_premium, 0)),
+            SUM(COALESCE(lifetime_premium_sum, 0)),
             NULLIF(SUM(COALESCE(scored_policies, 0)), 0)
           ) AS avg_lifetime_premium,
-          SAFE_DIVIDE(SUM(COALESCE(lifetime_cost, 0)), NULLIF(SUM(COALESCE(scored_policies, 0)), 0)) AS avg_lifetime_cost
-        FROM base_filtered
+          SAFE_DIVIDE(SUM(COALESCE(lifetime_cost_sum, 0)), NULLIF(SUM(COALESCE(scored_policies, 0)), 0)) AS avg_lifetime_cost
+        FROM state_segment_daily
+        WHERE event_date BETWEEN
+            CASE WHEN @startDate = '' THEN CURRENT_DATE - 14 ELSE @startDate::date END
+            AND CASE WHEN @endDate = '' THEN CURRENT_DATE ELSE @endDate::date END
+          AND ('__ALL__' = ANY(@states) OR state = ANY(@states))
+          AND (@activityType = '' OR activity_type = @activityType)
+          AND (@leadType = '' OR lead_type = @leadType)
         GROUP BY channel_group_name, state
       ),
       ssd_metrics AS (
@@ -1029,32 +869,44 @@ async function getPriceExplorationBQ(normalized) {
         avgLifetimeCostExpr: "SAFE_DIVIDE(SUM(lifetime_cost_sum), NULLIF(SUM(scored_policies), 0))",
         avgLifetimePremiumExpr: "SAFE_DIVIDE(SUM(lifetime_premium_sum), NULLIF(SUM(scored_policies), 0))"
     })} AS ssd_combined_ratio
-        FROM ${bqAnalyticsTable("state_segment_daily")}
-        WHERE event_date BETWEEN DATE(@startDate) AND DATE(@endDate)
-          AND ("__ALL__" IN UNNEST(@states) OR state IN UNNEST(@states))
-          AND ("__ALL__" IN UNNEST(@channelGroups) OR channel_group_name IN UNNEST(@channelGroups))
-          AND (@activityType = "" OR activity_type = @activityType)
-          AND (@leadType = "" OR lead_type = @leadType)
+        FROM state_segment_daily
+        WHERE event_date BETWEEN
+            CASE WHEN @startDate = '' THEN CURRENT_DATE - 14 ELSE @startDate::date END
+            AND CASE WHEN @endDate = '' THEN CURRENT_DATE ELSE @endDate::date END
+          AND ('__ALL__' = ANY(@states) OR state = ANY(@states))
+          AND ('__ALL__' = ANY(@channelGroups) OR channel_group_name = ANY(@channelGroups))
+          AND (@activityType = '' OR activity_type = @activityType)
+          AND (@leadType = '' OR lead_type = @leadType)
         GROUP BY channel_group_name, state
       ),
+      -- Binds per state+channel from PE data (state-filtered)
+      state_channel_binds AS (
+        SELECT
+          channel_group_name,
+          state,
+          SUM(number_of_binds) AS binds_state_channel
+        FROM pe_all
+        WHERE ('__ALL__' = ANY(@states) OR state = ANY(@states))
+        GROUP BY channel_group_name, state
+      ),
+      -- Channel-level binds from PE (all states)
       channel_binds AS (
         SELECT
           channel_group_name,
-          SUM(COALESCE(total_binds, 0)) AS channel_binds
-        FROM base_all
+          SUM(number_of_binds) AS channel_binds
+        FROM pe_all
         GROUP BY channel_group_name
       ),
       -- Channel-wide quotes and click-to-quote rate (all states, all TPs) for display
       channel_quotes_all AS (
         SELECT
           channel_group_name,
-          SUM(COALESCE(total_quotes, 0)) AS channel_quote,
-          -- quotes / sold (channel-wide)
+          SUM(number_of_quotes) AS channel_quote,
           SAFE_DIVIDE(
-            SUM(COALESCE(total_quotes, 0)),
-            NULLIF(SUM(COALESCE(transaction_sold, transaction_sold_alt, 0)), 0)
+            SUM(number_of_quotes),
+            NULLIF(SUM(sold), 0)
           ) AS click_to_channel_quote
-        FROM base_all
+        FROM pe_all
         GROUP BY channel_group_name
       ),
       q2b_source AS (
@@ -1062,18 +914,22 @@ async function getPriceExplorationBQ(normalized) {
           channel_group_name,
           state,
           SAFE_DIVIDE(SUM(COALESCE(binds, 0)), NULLIF(SUM(COALESCE(quotes, 0)), 0)) AS q2b
-        FROM ${bqAnalyticsTable("state_segment_daily")}
-        WHERE (@q2bStartDate = "" OR event_date >= DATE(@q2bStartDate))
-          AND (@q2bEndDate = "" OR event_date <= DATE(@q2bEndDate))
+        FROM state_segment_daily
+        WHERE (@q2bStartDate = '' OR event_date >= @q2bStartDate::date)
+          AND (@q2bEndDate = '' OR event_date <= @q2bEndDate::date)
+          AND (@activityType = '' OR activity_type = @activityType)
+          AND (@leadType = '' OR lead_type = @leadType)
         GROUP BY channel_group_name, state
       ),
       q2b_channel AS (
         SELECT
           channel_group_name,
           SAFE_DIVIDE(SUM(COALESCE(binds, 0)), NULLIF(SUM(COALESCE(quotes, 0)), 0)) AS channel_q2b
-        FROM ${bqAnalyticsTable("state_segment_daily")}
-        WHERE (@q2bStartDate = "" OR event_date >= DATE(@q2bStartDate))
-          AND (@q2bEndDate = "" OR event_date <= DATE(@q2bEndDate))
+        FROM state_segment_daily
+        WHERE (@q2bStartDate = '' OR event_date >= @q2bStartDate::date)
+          AND (@q2bEndDate = '' OR event_date <= @q2bEndDate::date)
+          AND (@activityType = '' OR activity_type = @activityType)
+          AND (@leadType = '' OR lead_type = @leadType)
         GROUP BY channel_group_name
       ),
       -- Q2B state-level fallback: product-market fit is state-driven
@@ -1081,9 +937,11 @@ async function getPriceExplorationBQ(normalized) {
         SELECT
           state,
           SAFE_DIVIDE(SUM(COALESCE(binds, 0)), NULLIF(SUM(COALESCE(quotes, 0)), 0)) AS state_q2b
-        FROM ${bqAnalyticsTable("state_segment_daily")}
-        WHERE (@q2bStartDate = "" OR event_date >= DATE(@q2bStartDate))
-          AND (@q2bEndDate = "" OR event_date <= DATE(@q2bEndDate))
+        FROM state_segment_daily
+        WHERE (@q2bStartDate = '' OR event_date >= @q2bStartDate::date)
+          AND (@q2bEndDate = '' OR event_date <= @q2bEndDate::date)
+          AND (@activityType = '' OR activity_type = @activityType)
+          AND (@leadType = '' OR lead_type = @leadType)
         GROUP BY state
       ),
       -- Quote rate: state+channel (≥50 quotes) → channel fallback
@@ -1130,14 +988,14 @@ async function getPriceExplorationBQ(normalized) {
           *,
           (expected_clicks * quote_rate * q2b_rate) AS expected_binds,
           -- Baseline expected binds for delta calculations
-          MAX(IF(testing_point = 0, expected_clicks * quote_rate * q2b_rate, NULL))
+          MAX(CASE WHEN testing_point = 0 THEN expected_clicks * quote_rate * q2b_rate END)
             OVER (PARTITION BY channel_group_name, state) AS baseline_expected_binds,
           -- Baseline expected CPB: baseline_expected_cost / actual_binds
-          MAX(IF(testing_point = 0,
+          MAX(CASE WHEN testing_point = 0 THEN
             SAFE_DIVIDE(
               expected_clicks * cpc,
               NULLIF(binds_state_channel, 0)
-            ), NULL))
+            ) END)
             OVER (PARTITION BY channel_group_name, state) AS baseline_expected_cpb
         FROM quote_rate_calc
       ),
@@ -1164,9 +1022,6 @@ async function getPriceExplorationBQ(normalized) {
           cpc_uplift_state,
           win_rate_uplift_channel,
           cpc_uplift_channel,
-          performance,
-          roe,
-          combined_ratio,
           CASE
             WHEN testing_point = 0         THEN NULL
             WHEN stat_sig = 'disqualified' THEN NULL
@@ -1239,6 +1094,7 @@ async function getPriceExplorationBQ(normalized) {
             )
           END AS cpb_uplift,
           stat_sig,
+          '' AS stat_sig_channel_group,
           CASE
             WHEN testing_point = 0         THEN 'baseline'
             WHEN stat_sig = 'disqualified' THEN 'disqualified'
@@ -1247,9 +1103,21 @@ async function getPriceExplorationBQ(normalized) {
           END AS stat_sig_source
         FROM with_expected_binds
       ),
+      -- Median bids per state+channel for is_valid_tp (PG percentile_cont)
+      median_bids AS (
+        SELECT
+          channel_group_name,
+          state,
+          percentile_cont(0.5) WITHIN GROUP (ORDER BY bids) AS median_bids
+        FROM final_rows
+        WHERE testing_point != 0
+        GROUP BY channel_group_name, state
+      ),
       final_rows_scoped AS (
         SELECT
-          final_rows.* EXCEPT (roe, combined_ratio),
+          final_rows.*,
+          -- performance from SSD: target_cpb / cpb
+          ssd_metrics.ssd_performance AS performance,
           ${buildRoeSql({
         zeroConditions: [
             "final_rows.expected_cpb IS NULL",
@@ -1278,10 +1146,8 @@ async function getPriceExplorationBQ(normalized) {
           ssd_metrics.ssd_combined_ratio,
           CASE
             WHEN final_rows.testing_point = 0 THEN TRUE
-            WHEN final_rows.bids >= 0.5 * PERCENTILE_CONT(
-              CASE WHEN final_rows.testing_point != 0 THEN final_rows.bids END, 0.5
-            ) OVER (PARTITION BY final_rows.channel_group_name, final_rows.state)
-            THEN TRUE
+            WHEN median_bids.median_bids IS NULL THEN TRUE
+            WHEN final_rows.bids >= 0.5 * median_bids.median_bids THEN TRUE
             ELSE FALSE
           END AS is_valid_tp
         FROM final_rows
@@ -1291,6 +1157,9 @@ async function getPriceExplorationBQ(normalized) {
         LEFT JOIN ssd_metrics
           ON ssd_metrics.channel_group_name = final_rows.channel_group_name
          AND ssd_metrics.state = final_rows.state
+        LEFT JOIN median_bids
+          ON median_bids.channel_group_name = final_rows.channel_group_name
+         AND median_bids.state = final_rows.state
       ),
       ranked_rows AS (
         SELECT
@@ -1435,44 +1304,46 @@ export async function listPlanMergedFilters(filters) {
         leadType: normalized.leadType
     });
     return cached(cacheKey, async () => {
-        const rows = await bqQuery(`
-        WITH scoped AS (
-          SELECT state, segment, channel_group_name, price_adjustment_percent, stat_sig
-          FROM ${bqAnalyticsRoutine("fn_plan_merged_agg")}(
-            IF(@startDate = "", DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY), DATE(@startDate)),
-            IF(@endDate = "", CURRENT_DATE(), DATE(@endDate))
-          )
+        const rows = await query(`
+        WITH pe_agg AS (
+          SELECT
+            channel_group_name,
+            state,
+            price_adjustment_percent,
+            UPPER(SUBSTRING(channel_group_name FROM '(?i)(MCH|MCR|SCH|SCR)')) AS segment,
+            SUM(bids) AS bids
+          FROM ${table("price_exploration_daily")}
+          WHERE date BETWEEN
+            CASE WHEN @startDate = '' THEN CURRENT_DATE - 14 ELSE @startDate::date END
+            AND CASE WHEN @endDate = '' THEN CURRENT_DATE ELSE @endDate::date END
+          GROUP BY 1, 2, 3, 4
+          HAVING UPPER(SUBSTRING(channel_group_name FROM '(?i)(MCH|MCR|SCH|SCR)')) IS NOT NULL
+        ),
+        pe_channel AS (
+          SELECT channel_group_name, price_adjustment_percent,
+            SUM(bids) AS channel_bids
+          FROM pe_agg
+          GROUP BY 1, 2
+        ),
+        pe_sig AS (
+          SELECT a.*,
+            CASE
+              WHEN a.price_adjustment_percent = 0 THEN 'baseline'
+              WHEN a.bids >= 200 THEN 'state'
+              WHEN a.bids >= 50 AND COALESCE(c.channel_bids - a.bids, 0) >= 600 THEN 'channel'
+              ELSE 'disqualified'
+            END AS stat_sig
+          FROM pe_agg a
+          LEFT JOIN pe_channel c
+            ON c.channel_group_name = a.channel_group_name
+           AND c.price_adjustment_percent = a.price_adjustment_percent
         )
         SELECT
-          ARRAY(
-            SELECT DISTINCT state
-            FROM scoped
-            WHERE state IS NOT NULL
-            ORDER BY state
-          ) AS states,
-          ARRAY(
-            SELECT DISTINCT segment
-            FROM scoped
-            WHERE segment IS NOT NULL
-            ORDER BY segment
-          ) AS segments,
-          ARRAY(
-            SELECT DISTINCT channel_group_name
-            FROM scoped
-            WHERE channel_group_name IS NOT NULL
-            ORDER BY channel_group_name
-          ) AS channel_groups,
-          ARRAY(
-            SELECT DISTINCT price_adjustment_percent
-            FROM scoped
-            ORDER BY price_adjustment_percent
-          ) AS testing_points,
-          ARRAY(
-            SELECT DISTINCT stat_sig
-            FROM scoped
-            WHERE stat_sig IS NOT NULL
-            ORDER BY stat_sig
-          ) AS stat_sig
+          ARRAY(SELECT DISTINCT state FROM pe_sig WHERE state IS NOT NULL ORDER BY state) AS states,
+          ARRAY(SELECT DISTINCT segment FROM pe_sig WHERE segment IS NOT NULL ORDER BY segment) AS segments,
+          ARRAY(SELECT DISTINCT channel_group_name FROM pe_sig WHERE channel_group_name IS NOT NULL ORDER BY channel_group_name) AS channel_groups,
+          ARRAY(SELECT DISTINCT price_adjustment_percent FROM pe_sig ORDER BY price_adjustment_percent) AS testing_points,
+          ARRAY(SELECT DISTINCT stat_sig FROM pe_sig WHERE stat_sig IS NOT NULL ORDER BY stat_sig) AS stat_sig
       `, normalized);
         const first = rows[0];
         return {
@@ -1498,37 +1369,185 @@ export async function getPlanMergedAnalytics(filters) {
         leadType: normalized.leadType
     });
     return cached(cacheKey, async () => {
-        const rows = await bqQuery(`
+        const rows = await query(`
+        WITH pe_raw AS (
+          SELECT
+            channel_group_name,
+            state,
+            price_adjustment_percent,
+            SUM(opps) AS opps,
+            SUM(bids) AS bids,
+            SUM(total_impressions) AS total_impressions,
+            SUM(sold) AS sold,
+            SUM(total_spend) AS total_spend,
+            SUM(number_of_quote_started) AS number_of_quote_started,
+            SUM(number_of_quotes) AS number_of_quotes,
+            SUM(number_of_binds) AS number_of_binds
+          FROM ${table("price_exploration_daily")}
+          WHERE date BETWEEN
+            CASE WHEN @startDate = '' THEN CURRENT_DATE - 14 ELSE @startDate::date END
+            AND CASE WHEN @endDate = '' THEN CURRENT_DATE ELSE @endDate::date END
+          GROUP BY 1, 2, 3
+        ),
+        pe_state_tp AS (
+          SELECT *,
+            CASE WHEN bids = 0 OR bids IS NULL THEN NULL ELSE sold::double precision / bids END AS win_rate,
+            CASE WHEN sold = 0 OR sold IS NULL THEN NULL ELSE total_spend / sold END AS cpc
+          FROM pe_raw
+        ),
+        pe_channel_tp AS (
+          SELECT
+            channel_group_name,
+            price_adjustment_percent,
+            SUM(bids) AS channel_bids,
+            SUM(sold) AS channel_sold,
+            SUM(total_spend) AS channel_total_spend,
+            CASE WHEN SUM(bids) = 0 THEN NULL ELSE SUM(sold)::double precision / SUM(bids) END AS channel_win_rate,
+            CASE WHEN SUM(sold) = 0 THEN NULL ELSE SUM(total_spend) / SUM(sold) END AS channel_cpc
+          FROM pe_state_tp
+          GROUP BY 1, 2
+        ),
+        pe_joined AS (
+          SELECT
+            s.*,
+            UPPER(SUBSTRING(s.channel_group_name FROM '(?i)(MCH|MCR|SCH|SCR)')) AS segment,
+            b.win_rate AS baseline_win_rate,
+            b.cpc AS baseline_cpc,
+            b.bids AS baseline_bids,
+            b.sold AS baseline_sold,
+            c.channel_bids,
+            c.channel_sold,
+            c.channel_win_rate,
+            c.channel_cpc,
+            (c.channel_bids - s.bids) AS channel_ex_bids,
+            cb.channel_win_rate AS channel_baseline_win_rate,
+            cb.channel_cpc AS channel_baseline_cpc
+          FROM pe_state_tp s
+          LEFT JOIN pe_state_tp b
+            ON b.channel_group_name = s.channel_group_name
+           AND b.state = s.state
+           AND b.price_adjustment_percent = 0
+          LEFT JOIN pe_channel_tp c
+            ON c.channel_group_name = s.channel_group_name
+           AND c.price_adjustment_percent = s.price_adjustment_percent
+          LEFT JOIN pe_channel_tp cb
+            ON cb.channel_group_name = s.channel_group_name
+           AND cb.price_adjustment_percent = 0
+        ),
+        pe_final AS (
+          SELECT
+            channel_group_name,
+            state,
+            segment,
+            price_adjustment_percent,
+            sold,
+            bids,
+            win_rate,
+            cpc,
+            CASE
+              WHEN price_adjustment_percent = 0 THEN 'baseline'
+              WHEN bids >= 200 THEN 'state'
+              WHEN bids >= 50 AND COALESCE(channel_ex_bids, 0) >= 600 THEN 'channel'
+              ELSE 'disqualified'
+            END AS stat_sig,
+            CASE
+              WHEN price_adjustment_percent = 0 THEN 'baseline'
+              WHEN channel_bids >= 200 THEN 'state'
+              ELSE 'disqualified'
+            END AS stat_sig_channel_group,
+            CASE WHEN price_adjustment_percent = 0 THEN NULL
+              ELSE CASE WHEN baseline_cpc = 0 OR baseline_cpc IS NULL THEN NULL ELSE (cpc - baseline_cpc) / baseline_cpc END
+            END AS cpc_uplift,
+            CASE WHEN price_adjustment_percent = 0 THEN NULL
+              ELSE CASE WHEN baseline_win_rate = 0 OR baseline_win_rate IS NULL THEN NULL ELSE (win_rate - baseline_win_rate) / baseline_win_rate END
+            END AS win_rate_uplift,
+            CASE
+              WHEN price_adjustment_percent = 0 THEN NULL
+              ELSE (
+                CASE
+                  WHEN bids >= 200 THEN win_rate
+                  WHEN bids >= 50 AND COALESCE(channel_ex_bids, 0) >= 600 THEN channel_win_rate
+                  ELSE win_rate
+                END - baseline_win_rate
+              ) * bids
+            END AS additional_clicks
+          FROM pe_joined
+          WHERE UPPER(SUBSTRING(channel_group_name FROM '(?i)(MCH|MCR|SCH|SCR)')) IS NOT NULL
+        ),
+        perf_daily AS (
+          SELECT
+            event_date, state, segment,
+            SUM(sold) AS sold,
+            SUM(total_cost) AS total_cost,
+            SUM(binds) AS binds,
+            SUM(target_cpb_sum) AS target_cpb
+          FROM ${table("state_segment_daily")}
+          WHERE event_date BETWEEN
+            CASE WHEN @startDate = '' THEN CURRENT_DATE - 14 ELSE @startDate::date END
+            AND CASE WHEN @endDate = '' THEN CURRENT_DATE ELSE @endDate::date END
+          GROUP BY 1, 2, 3
+        ),
+        perf AS (
+          SELECT
+            state, segment,
+            SUM(sold) AS ss_sold,
+            SUM(total_cost) AS ss_total_cost,
+            SUM(binds) AS ss_binds,
+            AVG(target_cpb) AS ss_target_cpb,
+            CASE WHEN SUM(binds) = 0 THEN NULL ELSE SUM(total_cost) / SUM(binds) END AS ss_cpb,
+            CASE WHEN SUM(total_cost) = 0 OR SUM(binds) = 0 THEN NULL
+              ELSE AVG(target_cpb) / (SUM(total_cost) / SUM(binds))
+            END AS ss_performance,
+            CASE WHEN SUM(sold) = 0 THEN NULL ELSE SUM(binds)::double precision / SUM(sold) END AS sold_to_bind
+          FROM perf_daily
+          GROUP BY 1, 2
+        ),
+        merged AS (
+          SELECT
+            fp.channel_group_name, fp.state, fp.segment, fp.price_adjustment_percent,
+            fp.stat_sig, fp.stat_sig_channel_group,
+            fp.cpc_uplift, fp.win_rate_uplift, fp.additional_clicks,
+            GREATEST(fp.sold + COALESCE(fp.additional_clicks, 0), 0) AS expected_total_clicks,
+            fp.cpc AS expected_cpc,
+            GREATEST(fp.sold + COALESCE(fp.additional_clicks, 0), 0) * fp.cpc AS expected_total_cost,
+            GREATEST(fp.sold + COALESCE(fp.additional_clicks, 0), 0) * COALESCE(pf.sold_to_bind, 0) AS expected_total_binds,
+            COALESCE(fp.additional_clicks, 0) * COALESCE(pf.sold_to_bind, 0) AS additional_expected_binds,
+            pf.ss_performance,
+            pf.ss_target_cpb
+          FROM pe_final fp
+          LEFT JOIN perf pf ON pf.state = fp.state AND pf.segment = fp.segment
+          WHERE ('__ALL__' = ANY(@states) OR fp.state = ANY(@states))
+            AND ('__ALL__' = ANY(@segments) OR fp.segment = ANY(@segments))
+            AND ('__ALL__' = ANY(@channelGroups) OR fp.channel_group_name = ANY(@channelGroups))
+            AND (999999999 = ANY(@testingPoints) OR fp.price_adjustment_percent = ANY(@testingPoints))
+            AND ('__ALL__' = ANY(@statSig) OR fp.stat_sig = ANY(@statSig))
+        )
         SELECT
-          start_date,
-          end_date,
-          channel_group_name,
-          state,
-          segment,
-          price_adjustment_percent,
-          stat_sig,
-          stat_sig_channel_group,
-          cpc_uplift,
-          win_rate_uplift,
-          additional_clicks,
+          CASE WHEN @startDate = '' THEN (CURRENT_DATE - 14)::text ELSE @startDate END AS start_date,
+          CASE WHEN @endDate = '' THEN CURRENT_DATE::text ELSE @endDate END AS end_date,
+          channel_group_name, state, segment, price_adjustment_percent,
+          stat_sig, stat_sig_channel_group,
+          cpc_uplift, win_rate_uplift, additional_clicks,
           expected_total_clicks,
           expected_cpc,
           expected_total_cost,
           expected_total_binds,
           additional_expected_binds,
-          expected_cpb,
+          CASE WHEN expected_total_binds = 0 OR expected_total_binds IS NULL THEN NULL
+            ELSE expected_total_cost / expected_total_binds
+          END AS expected_cpb,
           ss_performance,
-          expected_performance,
-          performance_uplift
-        FROM ${bqAnalyticsRoutine("fn_plan_merged_agg")}(
-          IF(@startDate = "", DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY), DATE(@startDate)),
-          IF(@endDate = "", CURRENT_DATE(), DATE(@endDate))
-        )
-        WHERE ("__ALL__" IN UNNEST(@states) OR state IN UNNEST(@states))
-          AND ("__ALL__" IN UNNEST(@segments) OR segment IN UNNEST(@segments))
-          AND ("__ALL__" IN UNNEST(@channelGroups) OR channel_group_name IN UNNEST(@channelGroups))
-          AND (999999999 IN UNNEST(@testingPoints) OR price_adjustment_percent IN UNNEST(@testingPoints))
-          AND ("__ALL__" IN UNNEST(@statSig) OR stat_sig IN UNNEST(@statSig))
+          CASE WHEN expected_total_cost = 0 OR expected_total_cost IS NULL
+                 OR expected_total_binds = 0 OR expected_total_binds IS NULL
+                 OR ss_target_cpb IS NULL THEN NULL
+            ELSE ss_target_cpb / (expected_total_cost / NULLIF(expected_total_binds, 0))
+          END AS expected_performance,
+          CASE WHEN expected_total_cost = 0 OR expected_total_cost IS NULL
+                 OR expected_total_binds = 0 OR expected_total_binds IS NULL
+                 OR ss_target_cpb IS NULL OR ss_performance IS NULL THEN NULL
+            ELSE (ss_target_cpb / (expected_total_cost / NULLIF(expected_total_binds, 0))) - ss_performance
+          END AS performance_uplift
+        FROM merged
         ORDER BY channel_group_name, state, price_adjustment_percent
       `, normalized);
         return rows;

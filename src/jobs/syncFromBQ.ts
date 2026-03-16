@@ -210,7 +210,7 @@ async function syncTable(
   const t0 = Date.now();
   const stagingTable = `${tableName}_new`;
   const oldTable = `${tableName}_old`;
-  const gcsPrefix = `sync/${tableName}`;
+  const gcsPrefix = `sync/${tableName}/${t0}`;
 
   try {
     const colDefs = cols
