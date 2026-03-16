@@ -152,6 +152,21 @@ export async function pgWithClient(
   }
 }
 
+/**
+ * Run a callback with a raw PG PoolClient from the pool.
+ * Needed for pg-copy-streams which requires direct client access.
+ */
+export async function pgWithRawClient<T>(
+  fn: (client: pg.PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    return await fn(client);
+  } finally {
+    client.release();
+  }
+}
+
 /** Gracefully close the pool (for shutdown). */
 export async function pgClose(): Promise<void> {
   if (pool) {
