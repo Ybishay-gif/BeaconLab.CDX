@@ -4,6 +4,17 @@ WITH base AS (
     DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) AS event_date,
     ChannelGroupName AS channel_group_name,
     Data_State AS state,
+    CASE
+      WHEN LOWER(COALESCE(activitytype, '')) LIKE 'click%' THEN 'clicks'
+      WHEN LOWER(COALESCE(activitytype, '')) LIKE 'lead%' THEN 'leads'
+      WHEN LOWER(COALESCE(activitytype, '')) LIKE 'call%' THEN 'calls'
+      ELSE ''
+    END AS activity_type,
+    CASE
+      WHEN LOWER(COALESCE(Leadtype, '')) LIKE '%car%' THEN 'auto'
+      WHEN LOWER(COALESCE(Leadtype, '')) LIKE '%home%' THEN 'home'
+      ELSE ''
+    END AS lead_type,
     SAFE_CAST(PriceAdjustmentPercent AS INT64) AS price_adjustment_percent,
     Lead_LeadID,
     SAFE_CAST(bid_count AS FLOAT64) AS bid_count,
@@ -26,6 +37,8 @@ state_tp AS (
     event_date,
     channel_group_name,
     state,
+    activity_type,
+    lead_type,
     price_adjustment_percent,
     COUNT(DISTINCT Lead_LeadID) AS opps,
     SUM(COALESCE(bid_count, 0)) AS bids,
@@ -54,19 +67,21 @@ state_tp AS (
     SUM(COALESCE(total_quotes, 0)) AS number_of_quotes,
     SUM(COALESCE(total_binds, 0)) AS number_of_binds
   FROM base
-  GROUP BY 1, 2, 3, 4
+  GROUP BY 1, 2, 3, 4, 5, 6
 ),
 channel_tp AS (
   SELECT
     event_date,
     channel_group_name,
+    activity_type,
+    lead_type,
     price_adjustment_percent,
     SUM(bids) AS channel_bids,
     SUM(sold) AS channel_sold,
     SAFE_DIVIDE(SUM(sold), NULLIF(SUM(bids), 0)) AS channel_win_rate,
     SAFE_DIVIDE(SUM(total_spend), NULLIF(SUM(sold), 0)) AS channel_cpc
   FROM state_tp
-  GROUP BY 1, 2, 3
+  GROUP BY 1, 2, 3, 4, 5
 ),
 joined AS (
   SELECT
@@ -90,20 +105,28 @@ joined AS (
     ON b.event_date = s.event_date
    AND b.channel_group_name = s.channel_group_name
    AND b.state = s.state
+   AND b.activity_type = s.activity_type
+   AND b.lead_type = s.lead_type
    AND b.price_adjustment_percent = 0
   LEFT JOIN channel_tp c
     ON c.event_date = s.event_date
    AND c.channel_group_name = s.channel_group_name
+   AND c.activity_type = s.activity_type
+   AND c.lead_type = s.lead_type
    AND c.price_adjustment_percent = s.price_adjustment_percent
   LEFT JOIN channel_tp cb
     ON cb.event_date = s.event_date
    AND cb.channel_group_name = s.channel_group_name
+   AND cb.activity_type = s.activity_type
+   AND cb.lead_type = s.lead_type
    AND cb.price_adjustment_percent = 0
 )
 SELECT
   event_date AS date,
   channel_group_name,
   state,
+  activity_type,
+  lead_type,
   price_adjustment_percent,
 
   opps,

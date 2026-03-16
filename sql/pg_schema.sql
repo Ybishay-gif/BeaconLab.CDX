@@ -196,6 +196,8 @@ CREATE TABLE IF NOT EXISTS price_exploration_daily (
   date DATE NOT NULL,
   channel_group_name TEXT,
   state TEXT,
+  activity_type TEXT DEFAULT '',
+  lead_type TEXT DEFAULT '',
   price_adjustment_percent INTEGER,
   opps BIGINT,
   bids DOUBLE PRECISION,
@@ -222,6 +224,11 @@ CREATE TABLE IF NOT EXISTS price_exploration_daily (
 );
 CREATE INDEX idx_ped_date ON price_exploration_daily(date);
 CREATE INDEX idx_ped_state_channel ON price_exploration_daily(state, channel_group_name);
+CREATE INDEX idx_ped_activity ON price_exploration_daily(activity_type, lead_type);
+-- Idempotent migration: add activity/lead type to price_exploration_daily
+ALTER TABLE price_exploration_daily ADD COLUMN IF NOT EXISTS activity_type TEXT DEFAULT '';
+ALTER TABLE price_exploration_daily ADD COLUMN IF NOT EXISTS lead_type TEXT DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_ped_activity ON price_exploration_daily(activity_type, lead_type);
 
 CREATE TABLE IF NOT EXISTS targets_perf_daily (
   event_date DATE NOT NULL,

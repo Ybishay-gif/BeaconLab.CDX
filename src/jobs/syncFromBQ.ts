@@ -19,14 +19,16 @@
  *   - price_exploration_daily    (~3.19M rows)
  */
 
-import { Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import { from as copyFrom } from "pg-copy-streams";
+import { Storage } from "@google-cloud/storage";
 import { bigquery, table as bqTable } from "../db/bigquery.js";
 import { pgExec, pgWithRawClient, pgTransaction } from "../db/postgres.js";
 import { cacheClear } from "../cache.js";
 import { snapshotSuggestedCpb } from "./snapshotSuggestedCpb.js";
 import { config } from "../config.js";
+
+const storage = new Storage();
+const SYNC_BUCKET = "beacon-lab-sync";
 
 type SyncTableResult = {
   table: string;
@@ -128,7 +130,8 @@ const TARGETS_PERF_DAILY_COLS = [
 ] as const;
 
 const PRICE_EXPLORATION_DAILY_COLS = [
-  "date", "channel_group_name", "state", "price_adjustment_percent",
+  "date", "channel_group_name", "state", "activity_type", "lead_type",
+  "price_adjustment_percent",
   "opps", "bids", "total_impressions", "avg_position", "sold",
   "win_rate", "avg_bid", "cpc", "total_spend", "click_to_quote",
   "quote_start_rate", "number_of_quote_started", "number_of_quotes",
@@ -137,6 +140,24 @@ const PRICE_EXPLORATION_DAILY_COLS = [
   "cpc_uplift_channelgroup", "win_rate_uplift",
   "win_rate_uplift_channelgroup", "additional_clicks", "refreshed_at",
 ] as const;
+
+// ── Index definitions (recreated AFTER atomic swap for speed) ─────────
+
+const TABLE_INDEXES: Record<string, string[]> = {
+  state_segment_daily: [
+    "CREATE INDEX IF NOT EXISTS idx_ssd_event_date ON state_segment_daily (event_date, activity_type, lead_type)",
+    "CREATE INDEX IF NOT EXISTS idx_ssd_state_segment ON state_segment_daily (state, segment)",
+  ],
+  targets_perf_daily: [
+    "CREATE INDEX IF NOT EXISTS idx_tpd_event_date ON targets_perf_daily (event_date, activity_type, lead_type)",
+    "CREATE INDEX IF NOT EXISTS idx_tpd_state_segment ON targets_perf_daily (state, segment)",
+  ],
+  price_exploration_daily: [
+    "CREATE INDEX IF NOT EXISTS idx_ped_date ON price_exploration_daily (date)",
+    "CREATE INDEX IF NOT EXISTS idx_ped_state_channel ON price_exploration_daily (state, channel_group_name)",
+    "CREATE INDEX IF NOT EXISTS idx_ped_activity ON price_exploration_daily (activity_type, lead_type)",
+  ],
+};
 
 // ── CSV helpers for COPY protocol ────────────────────────────────────
 
@@ -169,16 +190,17 @@ function csvValue(value: unknown): string {
   return str;
 }
 
-// ── Per-table sync (COPY streaming + atomic swap) ────────────────────
+// ── Per-table sync (GCS export + COPY + atomic swap) ─────────────────
 
 /**
- * Streams rows from BQ into a PG staging table via COPY protocol,
- * then atomically swaps it in.
+ * Syncs a table from BQ to PG via GCS CSV export:
  *
- * Pipeline: BQ Readable → CSV Transform → PG COPY Writable
+ *   BQ EXPORT DATA → GCS (CSV shards) → stream → PG COPY FROM STDIN
  *
- * Backpressure is handled by Node.js streams — if PG is slower than BQ,
- * the BQ stream pauses automatically. Memory: ~16KB stream buffers.
+ * Why GCS export instead of BQ API pagination:
+ *   - BQ writes CSV to GCS at ~100MB/s (seconds, not minutes)
+ *   - GCS download → PG COPY is a simple stream pipe (no pagination hang)
+ *   - Total: ~15s export + ~30-60s COPY = under 2 min per table
  */
 async function syncTable(
   tableName: string,
@@ -188,6 +210,7 @@ async function syncTable(
   const t0 = Date.now();
   const stagingTable = `${tableName}_new`;
   const oldTable = `${tableName}_old`;
+  const gcsPrefix = `sync/${tableName}`;
 
   try {
     const colDefs = cols
@@ -195,53 +218,97 @@ async function syncTable(
         : tableName === "price_exploration_daily" ? PRICE_EXPLORATION_DAILY_COLS
         : STATE_SEGMENT_DAILY_COLS);
 
-    // 1. Create staging table with same schema + indexes
+    // 1. Create UNLOGGED staging table WITHOUT indexes
     await pgExec(`DROP TABLE IF EXISTS ${stagingTable}`);
-    await pgExec(`CREATE TABLE ${stagingTable} (LIKE ${tableName} INCLUDING INDEXES)`);
+    await pgExec(`CREATE UNLOGGED TABLE ${stagingTable} (LIKE ${tableName})`);
 
-    // 2. Stream: BQ → CSV transform → COPY INTO staging table
-    let rowCount = 0;
     syncStatus.progress[tableName] = { rows: 0, done: false };
 
-    const bqStream = bigquery.createQueryStream({ query: bqSql, useLegacySql: false });
-    console.log(`[sync] ${tableName}: starting COPY stream...`);
+    // 2. Export BQ query results to GCS as CSV (no header)
+    //    BQ writes CSV shards in parallel — typically finishes in 10-20s
+    console.log(`[sync] ${tableName}: exporting to GCS...`);
+    const exportSql = `EXPORT DATA OPTIONS(
+      uri='gs://${SYNC_BUCKET}/${gcsPrefix}/*.csv',
+      format='CSV',
+      overwrite=true,
+      header=false
+    ) AS ${bqSql}`;
+    await bigquery.query({ query: exportSql, useLegacySql: false });
+    console.log(`[sync] ${tableName}: GCS export done (${Date.now() - t0}ms)`);
 
+    // 3. List exported CSV shard files
+    const [files] = await storage.bucket(SYNC_BUCKET).getFiles({ prefix: gcsPrefix + "/" });
+    const csvFiles = files.filter((f) => f.name.endsWith(".csv"));
+    console.log(`[sync] ${tableName}: ${csvFiles.length} CSV shards, streaming to PG...`);
+
+    // 4. Stream each CSV shard into PG via COPY
+    //    NULLs in BQ CSV export appear as empty fields → NULL '' in COPY
+    let rowCount = 0;
     await pgWithRawClient(async (client) => {
-      const copySql = `COPY ${stagingTable} (${colDefs.join(", ")}) FROM STDIN WITH (FORMAT csv, NULL '\\N')`;
+      const copySql = `COPY ${stagingTable} (${colDefs.join(", ")}) FROM STDIN WITH (FORMAT csv, NULL '')`;
       const pgStream = client.query(copyFrom(copySql));
 
-      const csvTransform = new Transform({
-        objectMode: true, // input: BQ row objects
-        transform(row: Record<string, unknown>, _encoding, callback) {
-          rowCount++;
-          if (rowCount % 100_000 === 0) {
-            syncStatus.progress[tableName] = { rows: rowCount, done: false };
-            console.log(`[sync] ${tableName}: ${rowCount.toLocaleString()} rows...`);
-          }
-          callback(null, colDefs.map((c) => csvValue(row[c])).join(",") + "\n");
-        },
-      });
+      for (const file of csvFiles) {
+        await new Promise<void>((resolve, reject) => {
+          const gcsStream = file.createReadStream();
+          gcsStream.on("data", (chunk: Buffer) => {
+            // Count newlines for progress tracking
+            for (let i = 0; i < chunk.length; i++) {
+              if (chunk[i] === 10) rowCount++; // 10 = '\n'
+            }
+            if (!pgStream.write(chunk)) {
+              gcsStream.pause();
+              pgStream.once("drain", () => gcsStream.resume());
+            }
+          });
+          gcsStream.on("end", resolve);
+          gcsStream.on("error", reject);
+        });
+        syncStatus.progress[tableName] = { rows: rowCount, done: false };
+        console.log(`[sync] ${tableName}: ${rowCount.toLocaleString()} rows streamed`);
+      }
 
-      await pipeline(bqStream, csvTransform, pgStream);
+      // Signal end-of-data and wait for PG to finish
+      await new Promise<void>((resolve, reject) => {
+        pgStream.on("finish", resolve);
+        pgStream.on("error", reject);
+        pgStream.end();
+      });
+      console.log(`[sync] ${tableName}: COPY completed, ${rowCount.toLocaleString()} rows`);
     });
 
     syncStatus.progress[tableName] = { rows: rowCount, done: true };
-    console.log(`[sync] ${tableName}: ${rowCount.toLocaleString()} rows total, swapping...`);
 
-    // 3. Atomic swap: staging → live
+    // 5. Atomic swap: staging → live
     await pgTransaction(async (exec) => {
       await exec(`DROP TABLE IF EXISTS ${oldTable}`);
       await exec(`ALTER TABLE ${tableName} RENAME TO ${oldTable}`);
       await exec(`ALTER TABLE ${stagingTable} RENAME TO ${tableName}`);
     });
 
-    // 4. Cleanup: drop old table (outside transaction — non-critical)
+    // 6. Recreate indexes (after swap — no index overhead during COPY)
+    const indexes = TABLE_INDEXES[tableName] ?? [];
+    for (const ddl of indexes) {
+      await pgExec(ddl);
+    }
+    if (indexes.length > 0) {
+      console.log(`[sync] ${tableName}: ${indexes.length} indexes recreated`);
+    }
+
+    // 7. Make table LOGGED again (for crash recovery in production)
+    await pgExec(`ALTER TABLE ${tableName} SET LOGGED`);
+
+    // 8. Cleanup: drop old table + delete GCS shards (non-critical)
     await pgExec(`DROP TABLE IF EXISTS ${oldTable}`);
+    try {
+      await storage.bucket(SYNC_BUCKET).deleteFiles({ prefix: gcsPrefix + "/" });
+    } catch { /* non-critical */ }
 
     return { table: tableName, rows: rowCount, ms: Date.now() - t0 };
   } catch (err) {
     // Cleanup staging table on failure
     try { await pgExec(`DROP TABLE IF EXISTS ${stagingTable}`); } catch { /* ignore */ }
+    try { await storage.bucket(SYNC_BUCKET).deleteFiles({ prefix: gcsPrefix + "/" }); } catch { /* ignore */ }
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[sync] ${tableName} failed:`, message);
     return { table: tableName, rows: 0, ms: Date.now() - t0, error: message };
@@ -253,23 +320,24 @@ async function syncTable(
 export async function syncAllFromBQ(): Promise<SyncResult> {
   const t0 = Date.now();
 
-  // Run all 3 tables in parallel — each gets its own PG client from the pool.
-  // Memory is minimal (~16KB stream buffers per table).
-  const [ssd, tpd, ped] = await Promise.all([
-    syncTable(
-      "state_segment_daily",
-      `SELECT
-         event_date, state, segment, channel_group_name, activity_type,
-         lead_type, bids, sold, total_cost, quote_started, quotes,
-         binds, scored_policies, target_cpb_sum, lifetime_premium_sum,
-         lifetime_cost_sum, avg_profit_sum, avg_equity_sum, avg_mrltv_sum,
-         CURRENT_TIMESTAMP() AS refreshed_at
-       FROM ${bqTable("state_segment_daily")}
-       WHERE event_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)`
-    ),
+  // Run all 3 tables in parallel — each gets its own GCS prefix + PG client
+  console.log("[sync] starting parallel sync (GCS export → COPY)...");
 
-    syncTable(
-      "targets_perf_daily",
+  const [ssd, tpd, ped] = await Promise.all([
+  syncTable(
+    "state_segment_daily",
+    `SELECT
+       event_date, state, segment, channel_group_name, activity_type,
+       lead_type, bids, sold, total_cost, quote_started, quotes,
+       binds, scored_policies, target_cpb_sum, lifetime_premium_sum,
+       lifetime_cost_sum, avg_profit_sum, avg_equity_sum, avg_mrltv_sum,
+       CURRENT_TIMESTAMP() AS refreshed_at
+     FROM ${bqTable("state_segment_daily")}
+     WHERE event_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)`
+  ),
+
+  syncTable(
+    "targets_perf_daily",
       `SELECT
          DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) AS event_date,
          UPPER(Data_State) AS state,
@@ -307,23 +375,24 @@ export async function syncAllFromBQ(): Promise<SyncResult> {
              >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
          AND Data_State IS NOT NULL
        GROUP BY 1, 2, 3, 4, 5, 6, 7`
-    ),
+  ),
 
-    syncTable(
-      "price_exploration_daily",
-      `SELECT
-         date, channel_group_name, state, price_adjustment_percent,
-         opps, bids, total_impressions, avg_position, sold,
-         win_rate, avg_bid, cpc, total_spend, click_to_quote,
-         quote_start_rate, number_of_quote_started, number_of_quotes,
-         number_of_binds,
-         stat_sig, stat_sig_channel_group, cpc_uplift,
-         cpc_uplift_channelgroup, win_rate_uplift,
-         win_rate_uplift_channelgroup, additional_clicks,
-         CURRENT_TIMESTAMP() AS refreshed_at
-       FROM ${bqTable("price_exploration_daily")}
-       WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)`
-    ),
+  syncTable(
+    "price_exploration_daily",
+    `SELECT
+       date, channel_group_name, state, activity_type, lead_type,
+       price_adjustment_percent,
+       opps, bids, total_impressions, avg_position, sold,
+       win_rate, avg_bid, cpc, total_spend, click_to_quote,
+       quote_start_rate, number_of_quote_started, number_of_quotes,
+       number_of_binds,
+       stat_sig, stat_sig_channel_group, cpc_uplift,
+       cpc_uplift_channelgroup, win_rate_uplift,
+       win_rate_uplift_channelgroup, additional_clicks,
+       CURRENT_TIMESTAMP() AS refreshed_at
+     FROM ${bqTable("price_exploration_daily")}
+     WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)`
+  ),
   ]);
 
   const results = [ssd, tpd, ped];

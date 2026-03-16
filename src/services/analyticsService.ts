@@ -904,8 +904,11 @@ export async function listPriceExplorationFilters(
        WHERE state IS NOT NULL
          AND (@startDate = '' OR date >= @startDate::date)
          AND (@endDate = '' OR date <= @endDate::date)
+         AND (@activityType = '' OR activity_type = @activityType)
+         AND (@leadType = '' OR lead_type = @leadType)
        ORDER BY state`,
-      { startDate: normalized.startDate, endDate: normalized.endDate }
+      { startDate: normalized.startDate, endDate: normalized.endDate,
+        activityType: normalized.activityType, leadType: normalized.leadType }
     );
 
     const channelRows = await query<{ channel_group_name: string }>(
@@ -914,8 +917,11 @@ export async function listPriceExplorationFilters(
        WHERE channel_group_name IS NOT NULL
          AND (@startDate = '' OR date >= @startDate::date)
          AND (@endDate = '' OR date <= @endDate::date)
+         AND (@activityType = '' OR activity_type = @activityType)
+         AND (@leadType = '' OR lead_type = @leadType)
        ORDER BY channel_group_name`,
-      { startDate: normalized.startDate, endDate: normalized.endDate }
+      { startDate: normalized.startDate, endDate: normalized.endDate,
+        activityType: normalized.activityType, leadType: normalized.leadType }
     );
 
     return {

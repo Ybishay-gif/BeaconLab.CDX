@@ -91,6 +91,11 @@ async function runMigrations() {
     await pgExec("ALTER TABLE targets ADD COLUMN IF NOT EXISTS target_cor DOUBLE PRECISION NOT NULL DEFAULT 0");
     await pgExec("ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT");
 
+    // Add activity_type / lead_type to price_exploration_daily (pre-existing rows get '')
+    await pgExec("ALTER TABLE price_exploration_daily ADD COLUMN IF NOT EXISTS activity_type TEXT DEFAULT ''");
+    await pgExec("ALTER TABLE price_exploration_daily ADD COLUMN IF NOT EXISTS lead_type TEXT DEFAULT ''");
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_ped_activity ON price_exploration_daily (activity_type, lead_type)").catch(() => {});
+
     // Usage analytics table
     await pgExec(`
       CREATE TABLE IF NOT EXISTS usage_events (

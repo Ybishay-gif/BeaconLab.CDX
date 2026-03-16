@@ -2,6 +2,8 @@ CREATE TABLE IF NOT EXISTS `crblx-beacon-prod.planning_app.price_exploration_dai
   date DATE,
   channel_group_name STRING,
   state STRING,
+  activity_type STRING,
+  lead_type STRING,
   price_adjustment_percent INT64,
   opps INT64,
   bids FLOAT64,
@@ -26,4 +28,4 @@ CREATE TABLE IF NOT EXISTS `crblx-beacon-prod.planning_app.price_exploration_dai
   refreshed_at TIMESTAMP
 )
 PARTITION BY date
-CLUSTER BY channel_group_name, state, price_adjustment_percent;
+CLUSTER BY channel_group_name, state, activity_type, lead_type;
