@@ -9,6 +9,7 @@ import {
 } from "../../services/aiChatSessionService.js";
 
 const planContextSchema = z.object({
+  planId: z.string().optional(),
   activityLeadType: z.string().optional(),
   perfStartDate: z.string().optional(),
   perfEndDate: z.string().optional(),

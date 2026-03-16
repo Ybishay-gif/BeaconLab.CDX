@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI, type Content } from "@google/generative-ai";
 import { query, table } from "../db/index.js";
 import { buildSystemPrompt } from "./aiKnowledge.js";
-import { ACTION_TOOLS, executeAction, type ActionResult } from "./aiActions.js";
+import { ACTION_TOOLS, executeAction, type ActionResult, type ActionPlanContext } from "./aiActions.js";
 import {
   ensureSession,
   saveMessage,
@@ -196,6 +196,7 @@ export interface AiChatResponse {
 }
 
 export interface PlanContext {
+  planId?: string;
   activityLeadType?: string;
   perfStartDate?: string;
   perfEndDate?: string;
@@ -270,6 +271,7 @@ export async function handleAiChat(
       (functionCallPart.functionCall.args as Record<string, unknown>) || {},
       userId,
       { sessionId, userMessage: message, isFirstMessage },
+      planContext,
     );
   }
 
@@ -358,17 +360,30 @@ async function handleFunctionCall(
   args: Record<string, unknown>,
   userId: string,
   persistCtx?: { sessionId: string; userMessage: string; isFirstMessage: boolean },
+  planContext?: PlanContext,
 ): Promise<AiChatResponse> {
   const MAX_TOOL_ROUNDS = 5; // prevent infinite loops
   let currentName = functionName;
   let currentArgs = args;
   let lastAction: ActionResult["action"] | undefined;
 
+  // Build ActionPlanContext from PlanContext for tools that need plan-scoped data
+  const actionPlanCtx: ActionPlanContext | undefined = planContext
+    ? {
+        planId: planContext.planId,
+        activityLeadType: planContext.activityLeadType,
+        perfStartDate: planContext.perfStartDate,
+        perfEndDate: planContext.perfEndDate,
+        qbcClicks: planContext.qbcClicks,
+        qbcLeadsCalls: planContext.qbcLeadsCalls,
+      }
+    : undefined;
+
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     // Execute the action
     let actionResult: ActionResult;
     try {
-      actionResult = await executeAction(currentName, currentArgs, userId);
+      actionResult = await executeAction(currentName, currentArgs, userId, actionPlanCtx);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       actionResult = { response: { error: `Action failed: ${msg}` } };

@@ -112,6 +112,16 @@ Examples: "What is ROE?", "How is COR calculated?", "Explain win rate"
 Examples: "Generate a report for MA", "What can you do?", "Create a report", "Help me"
 → Use the available function tools to perform actions.
 → When the user asks what you can do or asks for help, call the **list_available_actions** tool.
+
+## Type D — PRICE EXPLORATION question (user wants PE data, recommended testing points, budget allocation, additional binds/clicks)
+Examples: "Where should I allocate $20K for most binds?", "What are the recommended testing points?", "Show PE data for MA", "Which states have the best win rate uplift?", "How many additional binds can I get?"
+→ **ALWAYS call the get_price_exploration_data tool.** NEVER write SQL for PE-related questions.
+→ The tool runs the full PE engine with correct stat-sig classification, blended uplifts, funnel rates, strategy rules, and weighted scoring.
+→ Dates and activity type are automatically taken from the active plan context — do NOT ask the user for dates.
+→ After receiving the data, analyze and summarize it to answer the user's question.
+→ For budget allocation questions: identify rows where additional_budget_needed is positive, sort by cost efficiency (additional_budget_needed / expected_bind_change), and fit within the user's budget.
+→ For "free wins": highlight rows where expected_bind_change > 0 AND additional_budget_needed ≤ 0 (more binds at same or lower cost).
+
 → For report generation:
   1. **Always validate filter values first.** When a user mentions an account, channel, or state, call **lookup_filter_values** to verify the exact name before using it. If the name is approximate (e.g. "QS leads"), search for it and present matching options for the user to confirm.
   2. When the user asks what columns/data are available, call **list_report_columns** to show them.
@@ -679,66 +689,26 @@ GROUP BY state, channel_group_name, price_adjustment_percent
 ORDER BY channel_group_name, price_adjustment_percent
 \`\`\`
 
-## Pattern 6 — Performance + PE Additional Binds (COMPLEX cross-table)
-To find states with additional binds from PE recommendations, combine:
-1. Performance data from \`state_segment_daily\` (for ROE, COR, current binds, quote_rate, q2b) — filter by activity_type/lead_type
-2. PE data from \`price_exploration_daily\` (for additional_clicks at non-baseline testing points) — **NO activity/lead filters** (not available)
-3. additional_binds = additional_clicks × quote_rate × q2b
+## Pattern 6 — Price Exploration Analysis (ALWAYS use the tool)
+**⚠️ CRITICAL: NEVER write SQL for PE analysis.** Always use the **get_price_exploration_data** tool instead.
 
-**IMPORTANT**: When joining PE data with \`state_segment_daily\`, note that PE has no activity/lead type filtering.
-The join is on \`state\` only (PE has no segment column — segment is embedded in channel_group_name).
+The PE pipeline involves 600+ lines of complex SQL with stat-sig tiers, blended channel uplifts, funnel rate tiering, weighted scoring, and strategy rules. Writing SQL directly WILL produce incorrect results (wrong bind estimates, broken rate calculations, etc.).
 
-\`\`\`sql
-WITH perf AS (
-  SELECT
-    state,
-    SUM(binds) AS binds,
-    SUM(total_cost) AS total_cost,
-    SUM(scored_policies) AS scored_policies,
-    CASE WHEN SUM(binds) = 0 THEN NULL ELSE SUM(total_cost) / SUM(binds) END AS cpb,
-    CASE WHEN SUM(sold) = 0 THEN NULL ELSE SUM(quotes) / SUM(sold) END AS quote_rate,
-    CASE WHEN SUM(quotes) = 0 THEN NULL ELSE SUM(binds) / SUM(quotes) END AS q2b,
-    CASE WHEN SUM(scored_policies) = 0 OR SUM(avg_equity_sum) = 0 THEN NULL
-    ELSE (
-      (SUM(avg_profit_sum) / SUM(scored_policies))
-      - 0.8 * ((SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81 + 0)  -- ← QBC from plan context
-    ) / (SUM(avg_equity_sum) / SUM(scored_policies))
-    END AS roe,
-    CASE WHEN SUM(scored_policies) = 0 OR SUM(lifetime_premium_sum) = 0 THEN NULL
-    ELSE (
-      (SUM(total_cost) / NULLIF(SUM(binds), 0)) / 0.81 + 0  -- ← QBC from plan context
-      + (SUM(lifetime_cost_sum) / SUM(scored_policies))
-    ) / (SUM(lifetime_premium_sum) / SUM(scored_policies))
-    END AS cor
-  FROM state_segment_daily
-  WHERE activity_type = 'leads' AND lead_type = 'auto'
-  GROUP BY state
-  HAVING SUM(scored_policies) > 0
-),
-pe_additional AS (
-  SELECT
-    state,
-    SUM(additional_clicks) AS total_additional_clicks
-  FROM price_exploration_daily
-  WHERE price_adjustment_percent != 0
-    AND stat_sig IN ('state', 'channel')  -- stat_sig filter ONLY for additional binds estimates, NOT for exploratory queries
-  GROUP BY state
-  HAVING SUM(additional_clicks) > 0
-)
-SELECT
-  p.state,
-  p.binds AS current_binds,
-  ROUND(p.roe::numeric, 4) AS roe,
-  ROUND(p.cor::numeric, 4) AS cor,
-  ROUND(pe.total_additional_clicks::numeric, 0) AS additional_clicks,
-  ROUND((pe.total_additional_clicks * COALESCE(p.quote_rate, 0) * COALESCE(p.q2b, 0))::numeric, 1) AS estimated_additional_binds
-FROM perf p
-JOIN pe_additional pe ON pe.state = p.state
-WHERE p.roe > 0
-ORDER BY p.roe DESC
-\`\`\`
-**Note**: \`additional_binds = additional_clicks × quote_rate × q2b\`. This is an estimate.
-The actual PE pipeline uses more sophisticated blended uplifts and strategy rules.
+**Use the tool for ALL of these:**
+- Recommended testing points and their projected outcomes
+- Additional binds, additional clicks, additional budget estimates
+- Budget allocation optimization (e.g., "where to spend $20K for most binds")
+- Win rate uplifts, CPC uplifts, CPB projections
+- Comparing testing points for a state+channel pair (set include_all_testing_points=true)
+
+The tool returns pre-computed, correct values including: expected_bind_change, additional_budget_needed, expected_cpb, cpb_uplift, win_rate_uplift, cpc_uplift, stat_sig, and more.
+
+**Example: "Where to allocate $20K for most binds"**
+→ Call get_price_exploration_data (no extra args needed — dates come from plan)
+→ Separate rows into "free wins" (expected_bind_change > 0, additional_budget_needed ≤ 0) and "investments" (additional_budget_needed > 0)
+→ Sort investments by cost efficiency: additional_budget_needed / expected_bind_change (ascending = cheapest per bind first)
+→ Greedily select pairs until budget is exhausted
+→ Present the total additional binds achievable within the budget
 
 ## Pattern 7 — Change Log
 \`\`\`sql

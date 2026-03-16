@@ -10,6 +10,7 @@ import {
   type FunctionDeclarationsTool,
 } from "@google/generative-ai";
 import { createReport, getTableSchema, getFilterValues, type CreateReportInput } from "./reportService.js";
+import { getPriceExploration, type PriceExplorationFilters, type PriceExplorationRow } from "./analyticsService.js";
 
 /* ------------------------------------------------------------------ */
 /*  Tool declarations — passed to Gemini so it knows what it can call  */
@@ -93,6 +94,34 @@ export const ACTION_TOOLS: FunctionDeclarationsTool = {
         required: ["report_name"],
       },
     },
+    {
+      name: "get_price_exploration_data",
+      description:
+        "Fetch pre-computed Price Exploration (PE) data with recommended testing points. This tool runs the full PE engine which includes stat-sig classification, blended channel uplifts, funnel rates (quote rate, Q2B), expected bind changes, additional budget calculations, CPB projections, and weighted scoring for testing point selection based on strategy rules. ALWAYS use this tool instead of writing SQL when the user asks about: price exploration, recommended testing points, additional binds/clicks from PE, budget allocation based on PE, CPB projections, win rate uplifts, or any PE-related analysis. The data is automatically scoped to the active plan's date range and activity type.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          states: {
+            type: SchemaType.ARRAY,
+            items: { type: SchemaType.STRING },
+            description: "Filter by state abbreviations (e.g. ['MA', 'TX']). Leave empty for all states in the plan.",
+          },
+          channel_groups: {
+            type: SchemaType.ARRAY,
+            items: { type: SchemaType.STRING },
+            description: "Filter by channel group names. Leave empty for all channels.",
+          },
+          include_all_testing_points: {
+            type: SchemaType.BOOLEAN,
+            description: "If true, return ALL testing points for each state+channel pair. If false (default), return only the recommended testing point rows. Set to true when the user wants to compare different testing points or see the full PE data.",
+          },
+          top_pairs: {
+            type: SchemaType.NUMBER,
+            description: "Return only the top N state+channel pairs ranked by expected bind change. Useful for budget allocation questions. Leave empty for all pairs.",
+          },
+        },
+      },
+    },
   ],
 };
 
@@ -110,6 +139,16 @@ export interface ActionResult {
   };
 }
 
+/** Plan context passed from the AI chat handler for tools that need plan-scoped data */
+export interface ActionPlanContext {
+  planId?: string;
+  activityLeadType?: string;
+  perfStartDate?: string;
+  perfEndDate?: string;
+  qbcClicks?: number;
+  qbcLeadsCalls?: number;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Execution handlers                                                 */
 /* ------------------------------------------------------------------ */
@@ -118,6 +157,7 @@ export async function executeAction(
   actionName: string,
   args: Record<string, unknown>,
   userId: string,
+  planContext?: ActionPlanContext,
 ): Promise<ActionResult> {
   switch (actionName) {
     case "list_available_actions":
@@ -128,6 +168,8 @@ export async function executeAction(
       return await handleListReportColumns();
     case "generate_report":
       return await handleGenerateReport(args, userId);
+    case "get_price_exploration_data":
+      return await handleGetPriceExplorationData(args, planContext);
     default:
       return {
         response: { error: `Unknown action: ${actionName}` },
@@ -280,6 +322,164 @@ async function handleGenerateReport(
       response: {
         success: false,
         error: `Failed to create report: ${msg}`,
+      },
+    };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Price Exploration data handler                                     */
+/* ------------------------------------------------------------------ */
+
+/** Slim row shape sent to Gemini — only the fields it needs for analysis */
+interface PeRowForAi {
+  state: string;
+  channel_group_name: string;
+  testing_point: number;
+  bids: number;
+  sold: number;
+  win_rate: number;
+  cpc: number;
+  win_rate_uplift: number | null;
+  cpc_uplift: number | null;
+  additional_clicks: number | null;
+  expected_bind_change: number | null;
+  additional_budget_needed: number | null;
+  current_cpb: number | null;
+  expected_cpb: number | null;
+  cpb_uplift: number | null;
+  stat_sig: string;
+  recommended_testing_point: number | null;
+  is_recommended: boolean;
+  is_override: boolean;
+  performance: number | null;
+  roe: number | null;
+  combined_ratio: number | null;
+}
+
+function toAiRow(row: PriceExplorationRow): PeRowForAi {
+  return {
+    state: row.state,
+    channel_group_name: row.channel_group_name,
+    testing_point: row.testing_point,
+    bids: row.bids,
+    sold: row.sold,
+    win_rate: row.win_rate,
+    cpc: row.cpc,
+    win_rate_uplift: row.win_rate_uplift,
+    cpc_uplift: row.cpc_uplift,
+    additional_clicks: row.additional_clicks,
+    expected_bind_change: row.expected_bind_change,
+    additional_budget_needed: row.additional_budget_needed,
+    current_cpb: row.current_cpb,
+    expected_cpb: row.expected_cpb,
+    cpb_uplift: row.cpb_uplift,
+    stat_sig: row.stat_sig,
+    recommended_testing_point: row.recommended_testing_point,
+    is_recommended:
+      row.testing_point === row.recommended_testing_point && row.testing_point !== 0,
+    is_override: row.is_override,
+    performance: row.performance,
+    roe: row.roe,
+    combined_ratio: row.combined_ratio,
+  };
+}
+
+async function handleGetPriceExplorationData(
+  args: Record<string, unknown>,
+  planContext?: ActionPlanContext,
+): Promise<ActionResult> {
+  if (!planContext?.planId) {
+    return {
+      response: {
+        error: "No active plan selected. Please select a plan first so I can fetch the correct Price Exploration data scoped to the plan's date range and strategy rules.",
+      },
+    };
+  }
+
+  const states = (args.states as string[]) || [];
+  const channelGroups = (args.channel_groups as string[]) || [];
+  const includeAllTps = args.include_all_testing_points === true;
+  const topPairs = typeof args.top_pairs === "number" ? args.top_pairs : 0;
+
+  // Determine QBC based on activity type
+  const activity = planContext.activityLeadType?.split("_")[0];
+  const qbc = activity === "clicks"
+    ? (planContext.qbcClicks ?? 0)
+    : (planContext.qbcLeadsCalls ?? 0);
+
+  const filters: PriceExplorationFilters = {
+    planId: planContext.planId,
+    startDate: planContext.perfStartDate,
+    endDate: planContext.perfEndDate,
+    activityLeadType: planContext.activityLeadType,
+    qbc,
+    states: states.length > 0 ? states : undefined,
+    channelGroups: channelGroups.length > 0 ? channelGroups : undefined,
+    topPairs,
+    limit: 50000,
+  };
+
+  try {
+    const allRows = await getPriceExploration(filters);
+
+    let resultRows: PeRowForAi[];
+    if (includeAllTps) {
+      resultRows = allRows.map(toAiRow);
+    } else {
+      // Return only the recommended TP row for each state+channel pair
+      resultRows = allRows
+        .filter(
+          (r) =>
+            r.testing_point === r.recommended_testing_point &&
+            r.testing_point !== 0
+        )
+        .map(toAiRow);
+    }
+
+    // Sort by expected_bind_change descending
+    resultRows.sort(
+      (a, b) => (b.expected_bind_change ?? 0) - (a.expected_bind_change ?? 0),
+    );
+
+    // Cap output to prevent context explosion
+    const MAX_ROWS = 200;
+    const truncated = resultRows.length > MAX_ROWS;
+    const shown = resultRows.slice(0, MAX_ROWS);
+
+    // Compute summary stats
+    const positive = shown.filter((r) => (r.expected_bind_change ?? 0) > 0);
+    const totalAdditionalBinds = positive.reduce(
+      (sum, r) => sum + (r.expected_bind_change ?? 0),
+      0,
+    );
+    const totalAdditionalBudget = positive.reduce(
+      (sum, r) => sum + (r.additional_budget_needed ?? 0),
+      0,
+    );
+
+    return {
+      response: {
+        plan_id: planContext.planId,
+        date_range: `${planContext.perfStartDate} to ${planContext.perfEndDate}`,
+        activity_lead_type: planContext.activityLeadType,
+        qbc,
+        total_state_channel_pairs: resultRows.length,
+        pairs_with_positive_bind_change: positive.length,
+        total_additional_binds: Math.round(totalAdditionalBinds * 100) / 100,
+        total_additional_budget: Math.round(totalAdditionalBudget * 100) / 100,
+        rows: shown,
+        truncated,
+        note: includeAllTps
+          ? "Showing ALL testing points. Rows with is_recommended=true are the system-recommended TPs."
+          : "Showing only the recommended testing point for each state+channel pair. Use include_all_testing_points=true to see all TPs.",
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      response: {
+        error: `Failed to fetch Price Exploration data: ${msg}`,
       },
     };
   }
