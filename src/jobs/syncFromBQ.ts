@@ -1,17 +1,15 @@
 /**
- * Daily sync job: BQ → PostgreSQL.
+ * Daily sync job: BQ → PostgreSQL via Cloud SQL Import.
  *
- * Pulls analytics data from BigQuery pre-aggregated tables
- * and streams it into the PostgreSQL runtime database.
+ * Uses Cloud SQL's native CSV import for server-side data loading.
+ * No streaming through the application — Cloud SQL pulls directly from GCS.
  *
- * Key design:
- *   - Fire-and-forget: POST /admin/sync-from-bq returns 202 immediately.
- *     The sync runs as a background async task — no HTTP timeout dependency.
- *   - COPY protocol: streams CSV directly to PG storage via pg-copy-streams,
- *     bypassing SQL parsing. 20-50x faster than INSERT batching.
- *   - Parallel: all 3 tables sync concurrently (~50KB total memory).
- *   - Atomic table swap: staging table + RENAME. Readers never see partial data.
- *   - Progress tracking: GET /admin/sync-status returns per-table row counts.
+ * Flow per table:
+ *   1. BQ query → temp BQ table (with 90-day filter + aggregations)
+ *   2. BQ extract → single CSV in GCS (no header)
+ *   3. Cloud SQL Import CSV → PG staging table (server-side, ~seconds)
+ *   4. Atomic swap: staging → live table
+ *   5. Recreate indexes, SET LOGGED, cleanup
  *
  * Tables synced (90-day window):
  *   - state_segment_daily        (~1.04M rows)
@@ -19,16 +17,21 @@
  *   - price_exploration_daily    (~3.19M rows)
  */
 
-import { from as copyFrom } from "pg-copy-streams";
 import { Storage } from "@google-cloud/storage";
+import { GoogleAuth } from "google-auth-library";
 import { bigquery, table as bqTable } from "../db/bigquery.js";
-import { pgExec, pgWithRawClient, pgTransaction } from "../db/postgres.js";
+import { pgExec, pgTransaction } from "../db/postgres.js";
 import { cacheClear } from "../cache.js";
 import { snapshotSuggestedCpb } from "./snapshotSuggestedCpb.js";
 import { config } from "../config.js";
 
 const storage = new Storage();
+const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
+
 const SYNC_BUCKET = "beacon-lab-sync";
+const CLOUD_SQL_INSTANCE = "beacon-lab-db";
+const PG_DATABASE = "beacon_lab";
+const PG_USER = "beacon";
 
 type SyncTableResult = {
   table: string;
@@ -51,7 +54,7 @@ type SyncStatus = {
   completedAt: string | null;
   result: SyncResult | null;
   error: string | null;
-  progress: Record<string, { rows: number; done: boolean }>;
+  progress: Record<string, { rows: number; done: boolean; phase?: string }>;
 };
 
 let syncStatus: SyncStatus = {
@@ -91,10 +94,8 @@ export function startSyncInBackground(): { started: boolean; message: string } {
       syncStatus.result = result;
       syncStatus.running = false;
       syncStatus.completedAt = new Date().toISOString();
-      // Clear analytics cache now that fresh data is in PG
       cacheClear();
       console.log(`[sync] completed in ${result.totalMs}ms — cache cleared`);
-      // Chain: snapshot suggested CPB after fresh data is available
       try {
         await snapshotSuggestedCpb();
         console.log(`[sync] suggested CPB snapshot complete`);
@@ -159,125 +160,142 @@ const TABLE_INDEXES: Record<string, string[]> = {
   ],
 };
 
-// ── CSV helpers for COPY protocol ────────────────────────────────────
+// ── BQ helpers ─────────────────────────────────────────────────────────
 
-/** Convert a single value to CSV format for PG COPY. */
-function csvValue(value: unknown): string {
-  if (value === null || value === undefined) return "\\N";
-
-  // BQ date/timestamp objects have a .value property
-  if (typeof value === "object" && value !== null && "value" in value) {
-    return csvValue((value as { value: unknown }).value);
+/** Poll a BQ job until it completes. Throws on error. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function waitForBqJob(job: any): Promise<void> {
+  while (true) {
+    const [meta] = await job.getMetadata();
+    if (meta.status?.state === "DONE") {
+      if (meta.status?.errorResult) {
+        throw new Error(meta.status.errorResult.message);
+      }
+      return;
+    }
+    await new Promise(r => setTimeout(r, 1000));
   }
-
-  // Date objects with toISOString
-  if (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { toISOString?: unknown }).toISOString === "function"
-  ) {
-    return (value as { toISOString: () => string }).toISOString();
-  }
-
-  if (typeof value === "number" || typeof value === "bigint") return String(value);
-  if (typeof value === "boolean") return value ? "t" : "f";
-
-  const str = String(value);
-  // Must quote if contains comma, double-quote, newline, or backslash
-  if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\\")) {
-    return '"' + str.replace(/"/g, '""') + '"';
-  }
-  return str;
 }
 
-// ── Per-table sync (GCS export + COPY + atomic swap) ─────────────────
+/** Run a BQ query and write results to a temp table. Returns row count. */
+async function bqQueryToTemp(tableName: string, sql: string): Promise<number> {
+  const tmpTableId = `_sync_tmp_${tableName}`;
+  const dataset = bigquery.dataset(config.dataset);
 
-/**
- * Syncs a table from BQ to PG via GCS CSV export:
- *
- *   BQ EXPORT DATA → GCS (CSV shards) → stream → PG COPY FROM STDIN
- *
- * Why GCS export instead of BQ API pagination:
- *   - BQ writes CSV to GCS at ~100MB/s (seconds, not minutes)
- *   - GCS download → PG COPY is a simple stream pipe (no pagination hang)
- *   - Total: ~15s export + ~30-60s COPY = under 2 min per table
- */
+  const [job] = await bigquery.createQueryJob({
+    query: sql,
+    destination: dataset.table(tmpTableId),
+    writeDisposition: "WRITE_TRUNCATE",
+    useLegacySql: false,
+  });
+  await waitForBqJob(job);
+
+  const [meta] = await dataset.table(tmpTableId).getMetadata();
+  return parseInt(meta.numRows || "0", 10);
+}
+
+/** Extract a BQ temp table to a single CSV in GCS (no header). */
+async function bqExtractToGcs(tableName: string): Promise<string> {
+  const tmpTableId = `_sync_tmp_${tableName}`;
+  const gcsUri = `gs://${SYNC_BUCKET}/sync/${tableName}.csv`;
+
+  const [job] = await bigquery.createJob({
+    configuration: {
+      extract: {
+        sourceTable: {
+          projectId: config.projectId,
+          datasetId: config.dataset,
+          tableId: tmpTableId,
+        },
+        destinationUris: [gcsUri],
+        destinationFormat: "CSV",
+        printHeader: false,
+      },
+    },
+  });
+  await waitForBqJob(job);
+  return gcsUri;
+}
+
+// ── Cloud SQL Import ───────────────────────────────────────────────────
+
+/** Import a CSV from GCS into PG via Cloud SQL Admin API (server-side). */
+async function cloudSqlImportCsv(
+  gcsUri: string,
+  table: string,
+  columns: readonly string[],
+): Promise<void> {
+  const client = await auth.getClient();
+
+  const res = await client.request({
+    url: `https://sqladmin.googleapis.com/v1/projects/${config.projectId}/instances/${CLOUD_SQL_INSTANCE}/import`,
+    method: "POST",
+    data: {
+      importContext: {
+        fileType: "CSV",
+        uri: gcsUri,
+        database: PG_DATABASE,
+        importUser: PG_USER,
+        csvImportOptions: {
+          table,
+          columns: [...columns],
+        },
+      },
+    },
+  });
+
+  // Poll the operation until complete
+  const opName = (res.data as Record<string, unknown>).name as string;
+  while (true) {
+    const opRes = await client.request({
+      url: `https://sqladmin.googleapis.com/v1/projects/${config.projectId}/operations/${opName}`,
+      method: "GET",
+    });
+    const op = opRes.data as Record<string, unknown>;
+    if (op.status === "DONE") {
+      if (op.error) {
+        const errors = (op.error as Record<string, unknown>).errors;
+        throw new Error(`Cloud SQL import failed: ${JSON.stringify(errors)}`);
+      }
+      return;
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+}
+
+// ── Per-table sync ─────────────────────────────────────────────────────
+
 async function syncTable(
   tableName: string,
   bqSql: string,
-  cols?: readonly string[],
+  cols: readonly string[],
 ): Promise<SyncTableResult> {
   const t0 = Date.now();
   const stagingTable = `${tableName}_new`;
   const oldTable = `${tableName}_old`;
-  const gcsPrefix = `sync/${tableName}/${t0}`;
 
   try {
-    const colDefs = cols
-      ?? (tableName === "targets_perf_daily" ? TARGETS_PERF_DAILY_COLS
-        : tableName === "price_exploration_daily" ? PRICE_EXPLORATION_DAILY_COLS
-        : STATE_SEGMENT_DAILY_COLS);
+    // 1. BQ query → temp BQ table
+    syncStatus.progress[tableName] = { rows: 0, done: false, phase: "query" };
+    console.log(`[sync] ${tableName}: BQ query → temp table...`);
+    const rowCount = await bqQueryToTemp(tableName, bqSql);
+    console.log(`[sync] ${tableName}: ${rowCount.toLocaleString()} rows queried (${Date.now() - t0}ms)`);
 
-    // 1. Create UNLOGGED staging table WITHOUT indexes
+    // 2. BQ extract → single CSV in GCS
+    syncStatus.progress[tableName] = { rows: rowCount, done: false, phase: "extract" };
+    console.log(`[sync] ${tableName}: extracting to GCS...`);
+    const gcsUri = await bqExtractToGcs(tableName);
+    console.log(`[sync] ${tableName}: extract done (${Date.now() - t0}ms)`);
+
+    // 3. Create PG staging table
     await pgExec(`DROP TABLE IF EXISTS ${stagingTable}`);
     await pgExec(`CREATE UNLOGGED TABLE ${stagingTable} (LIKE ${tableName})`);
 
-    syncStatus.progress[tableName] = { rows: 0, done: false };
-
-    // 2. Export BQ query results to GCS as CSV (no header)
-    //    BQ writes CSV shards in parallel — typically finishes in 10-20s
-    console.log(`[sync] ${tableName}: exporting to GCS...`);
-    const exportSql = `EXPORT DATA OPTIONS(
-      uri='gs://${SYNC_BUCKET}/${gcsPrefix}/*.csv',
-      format='CSV',
-      overwrite=true,
-      header=false
-    ) AS ${bqSql}`;
-    await bigquery.query({ query: exportSql, useLegacySql: false });
-    console.log(`[sync] ${tableName}: GCS export done (${Date.now() - t0}ms)`);
-
-    // 3. List exported CSV shard files
-    const [files] = await storage.bucket(SYNC_BUCKET).getFiles({ prefix: gcsPrefix + "/" });
-    const csvFiles = files.filter((f) => f.name.endsWith(".csv"));
-    console.log(`[sync] ${tableName}: ${csvFiles.length} CSV shards, streaming to PG...`);
-
-    // 4. Stream each CSV shard into PG via COPY
-    //    NULLs in BQ CSV export appear as empty fields → NULL '' in COPY
-    let rowCount = 0;
-    await pgWithRawClient(async (client) => {
-      const copySql = `COPY ${stagingTable} (${colDefs.join(", ")}) FROM STDIN WITH (FORMAT csv, NULL '')`;
-      const pgStream = client.query(copyFrom(copySql));
-
-      for (const file of csvFiles) {
-        await new Promise<void>((resolve, reject) => {
-          const gcsStream = file.createReadStream();
-          gcsStream.on("data", (chunk: Buffer) => {
-            // Count newlines for progress tracking
-            for (let i = 0; i < chunk.length; i++) {
-              if (chunk[i] === 10) rowCount++; // 10 = '\n'
-            }
-            if (!pgStream.write(chunk)) {
-              gcsStream.pause();
-              pgStream.once("drain", () => gcsStream.resume());
-            }
-          });
-          gcsStream.on("end", resolve);
-          gcsStream.on("error", reject);
-        });
-        syncStatus.progress[tableName] = { rows: rowCount, done: false };
-        console.log(`[sync] ${tableName}: ${rowCount.toLocaleString()} rows streamed`);
-      }
-
-      // Signal end-of-data and wait for PG to finish
-      await new Promise<void>((resolve, reject) => {
-        pgStream.on("finish", resolve);
-        pgStream.on("error", reject);
-        pgStream.end();
-      });
-      console.log(`[sync] ${tableName}: COPY completed, ${rowCount.toLocaleString()} rows`);
-    });
-
-    syncStatus.progress[tableName] = { rows: rowCount, done: true };
+    // 4. Cloud SQL import CSV → PG staging table
+    syncStatus.progress[tableName] = { rows: rowCount, done: false, phase: "import" };
+    console.log(`[sync] ${tableName}: Cloud SQL importing...`);
+    await cloudSqlImportCsv(gcsUri, stagingTable, cols);
+    console.log(`[sync] ${tableName}: import done (${Date.now() - t0}ms)`);
 
     // 5. Atomic swap: staging → live
     await pgTransaction(async (exec) => {
@@ -286,29 +304,24 @@ async function syncTable(
       await exec(`ALTER TABLE ${stagingTable} RENAME TO ${tableName}`);
     });
 
-    // 6. Recreate indexes (after swap — no index overhead during COPY)
+    // 6. Recreate indexes + SET LOGGED
     const indexes = TABLE_INDEXES[tableName] ?? [];
-    for (const ddl of indexes) {
-      await pgExec(ddl);
-    }
-    if (indexes.length > 0) {
-      console.log(`[sync] ${tableName}: ${indexes.length} indexes recreated`);
-    }
-
-    // 7. Make table LOGGED again (for crash recovery in production)
+    for (const ddl of indexes) await pgExec(ddl);
+    if (indexes.length > 0) console.log(`[sync] ${tableName}: ${indexes.length} indexes recreated`);
     await pgExec(`ALTER TABLE ${tableName} SET LOGGED`);
 
-    // 8. Cleanup: drop old table + delete GCS shards (non-critical)
+    // 7. Cleanup (non-critical)
     await pgExec(`DROP TABLE IF EXISTS ${oldTable}`);
-    try {
-      await storage.bucket(SYNC_BUCKET).deleteFiles({ prefix: gcsPrefix + "/" });
-    } catch { /* non-critical */ }
+    try { await storage.bucket(SYNC_BUCKET).file(`sync/${tableName}.csv`).delete(); } catch { /* ok */ }
+    try { await bigquery.dataset(config.dataset).table(`_sync_tmp_${tableName}`).delete(); } catch { /* ok */ }
 
+    syncStatus.progress[tableName] = { rows: rowCount, done: true, phase: "done" };
+    console.log(`[sync] ${tableName}: complete — ${rowCount.toLocaleString()} rows in ${Date.now() - t0}ms`);
     return { table: tableName, rows: rowCount, ms: Date.now() - t0 };
   } catch (err) {
-    // Cleanup staging table on failure
     try { await pgExec(`DROP TABLE IF EXISTS ${stagingTable}`); } catch { /* ignore */ }
-    try { await storage.bucket(SYNC_BUCKET).deleteFiles({ prefix: gcsPrefix + "/" }); } catch { /* ignore */ }
+    try { await storage.bucket(SYNC_BUCKET).file(`sync/${tableName}.csv`).delete(); } catch { /* ignore */ }
+    try { await bigquery.dataset(config.dataset).table(`_sync_tmp_${tableName}`).delete(); } catch { /* ignore */ }
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[sync] ${tableName} failed:`, message);
     return { table: tableName, rows: 0, ms: Date.now() - t0, error: message };
@@ -320,11 +333,10 @@ async function syncTable(
 export async function syncAllFromBQ(): Promise<SyncResult> {
   const t0 = Date.now();
 
-  // Run all 3 tables in parallel — each gets its own GCS prefix + PG client
-  console.log("[sync] starting parallel sync (GCS export → COPY)...");
+  // Sequential: Cloud SQL only supports one import operation at a time
+  console.log("[sync] starting sync (BQ → GCS → Cloud SQL Import)...");
 
-  const [ssd, tpd, ped] = await Promise.all([
-  syncTable(
+  const ssd = await syncTable(
     "state_segment_daily",
     `SELECT
        event_date, state, segment, channel_group_name, activity_type,
@@ -333,10 +345,11 @@ export async function syncAllFromBQ(): Promise<SyncResult> {
        lifetime_cost_sum, avg_profit_sum, avg_equity_sum, avg_mrltv_sum,
        CURRENT_TIMESTAMP() AS refreshed_at
      FROM ${bqTable("state_segment_daily")}
-     WHERE event_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)`
-  ),
+     WHERE event_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)`,
+    STATE_SEGMENT_DAILY_COLS,
+  );
 
-  syncTable(
+  const tpd = await syncTable(
     "targets_perf_daily",
       `SELECT
          DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) AS event_date,
@@ -374,10 +387,11 @@ export async function syncAllFromBQ(): Promise<SyncResult> {
        WHERE DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated))
              >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
          AND Data_State IS NOT NULL
-       GROUP BY 1, 2, 3, 4, 5, 6, 7`
-  ),
+       GROUP BY 1, 2, 3, 4, 5, 6, 7`,
+    TARGETS_PERF_DAILY_COLS,
+  );
 
-  syncTable(
+  const ped = await syncTable(
     "price_exploration_daily",
     `SELECT
        date, channel_group_name, state, activity_type, lead_type,
@@ -391,9 +405,9 @@ export async function syncAllFromBQ(): Promise<SyncResult> {
        win_rate_uplift_channelgroup, additional_clicks,
        CURRENT_TIMESTAMP() AS refreshed_at
      FROM ${bqTable("price_exploration_daily")}
-     WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)`
-  ),
-  ]);
+     WHERE date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)`,
+    PRICE_EXPLORATION_DAILY_COLS,
+  );
 
   const results = [ssd, tpd, ped];
   const ok = results.every((r) => !r.error);
