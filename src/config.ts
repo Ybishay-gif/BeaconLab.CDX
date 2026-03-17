@@ -31,6 +31,9 @@ export const config = {
   usePg: process.env.USE_PG === "true",
   cloudSqlConnectionName: process.env.CLOUD_SQL_CONNECTION_NAME || "",
 
+  // SFTP
+  sftpEncryptionKey: process.env.SFTP_ENCRYPTION_KEY || "",
+
   // Shared secret for Cloud Scheduler → admin endpoint auth (optional; falls back to session auth)
   schedulerSecret: process.env.SCHEDULER_SECRET || "",
 };

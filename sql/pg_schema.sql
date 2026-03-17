@@ -311,3 +311,35 @@ CREATE TABLE IF NOT EXISTS report_templates (
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_report_templates_user ON report_templates(user_id, created_at DESC);
+
+-- ── SFTP Connections (org-wide) ────────────────────────────────────
+CREATE TABLE IF NOT EXISTS sftp_connections (
+  connection_id      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  name               TEXT NOT NULL,
+  host               TEXT NOT NULL,
+  port               INTEGER NOT NULL DEFAULT 22,
+  username           TEXT NOT NULL,
+  password_encrypted TEXT NOT NULL,
+  remote_path        TEXT NOT NULL DEFAULT '/',
+  is_active          BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by         TEXT NOT NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_sftp_connections_active ON sftp_connections(is_active);
+
+-- ── SFTP Upload Log ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS sftp_uploads (
+  upload_id      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  report_id      TEXT NOT NULL REFERENCES reports(report_id) ON DELETE CASCADE,
+  connection_id  TEXT NOT NULL REFERENCES sftp_connections(connection_id) ON DELETE CASCADE,
+  status         TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (status IN ('pending','uploading','done','error')),
+  remote_file    TEXT,
+  error_message  TEXT,
+  initiated_by   TEXT NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at   TIMESTAMPTZ
+);
+CREATE INDEX idx_sftp_uploads_report ON sftp_uploads(report_id);
+CREATE INDEX idx_sftp_uploads_status ON sftp_uploads(status);

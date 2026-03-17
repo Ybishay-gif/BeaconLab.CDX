@@ -447,6 +447,40 @@ async function runMigrations() {
     `);
     await pgExec("CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_session ON ai_chat_messages(session_id, created_at ASC)");
 
+    // SFTP Connections & Uploads
+    await pgExec(`
+      CREATE TABLE IF NOT EXISTS sftp_connections (
+        connection_id      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        name               TEXT NOT NULL,
+        host               TEXT NOT NULL,
+        port               INTEGER NOT NULL DEFAULT 22,
+        username           TEXT NOT NULL,
+        password_encrypted TEXT NOT NULL,
+        remote_path        TEXT NOT NULL DEFAULT '/',
+        is_active          BOOLEAN NOT NULL DEFAULT TRUE,
+        created_by         TEXT NOT NULL,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_sftp_connections_active ON sftp_connections(is_active)");
+    await pgExec(`
+      CREATE TABLE IF NOT EXISTS sftp_uploads (
+        upload_id      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        report_id      TEXT NOT NULL REFERENCES reports(report_id) ON DELETE CASCADE,
+        connection_id  TEXT NOT NULL REFERENCES sftp_connections(connection_id) ON DELETE CASCADE,
+        status         TEXT NOT NULL DEFAULT 'pending'
+                         CHECK (status IN ('pending','uploading','done','error')),
+        remote_file    TEXT,
+        error_message  TEXT,
+        initiated_by   TEXT NOT NULL,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at   TIMESTAMPTZ
+      )
+    `);
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_sftp_uploads_report ON sftp_uploads(report_id)");
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_sftp_uploads_status ON sftp_uploads(status)");
+
     console.log("Migrations OK");
   } catch (err) {
     console.warn("Migration warning (non-fatal):", err);
