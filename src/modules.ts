@@ -10,7 +10,6 @@ export interface ModuleDefinition {
 export const MODULE_REGISTRY: ModuleDefinition[] = [
   { id: "planning", label: "Planning", defaultRoute: "/plan/builder" },
   { id: "channel_recommendations", label: "Channel Recommendations", defaultRoute: "/channel-rec" },
-  { id: "ad_group_levers", label: "Ad Group Levers", defaultRoute: "/ad-group-levers" },
 ];
 
 export const VALID_MODULE_IDS = MODULE_REGISTRY.map((m) => m.id);

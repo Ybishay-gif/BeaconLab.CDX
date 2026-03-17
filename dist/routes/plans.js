@@ -13,7 +13,9 @@ import { chatRoutes } from "./api/chatRoutes.js";
 import { aiChatRoutes } from "./api/aiChatRoutes.js";
 import { ticketsRoutes } from "./api/ticketsRoutes.js";
 import { reportRoutes } from "./api/reportRoutes.js";
+import { sftpRoutes } from "./api/sftpRoutes.js";
 import { rolesRoutes } from "./api/rolesRoutes.js";
+import { adLeverRoutes } from "./api/adLeverRoutes.js";
 export const plansRouter = Router();
 // Admin routes (cache warming, etc.) — requires auth OR Cloud Scheduler header
 plansRouter.use(adminRoutes);
@@ -31,4 +33,6 @@ plansRouter.use(chatRoutes);
 plansRouter.use(aiChatRoutes);
 plansRouter.use(ticketsRoutes);
 plansRouter.use(reportRoutes);
+plansRouter.use(sftpRoutes);
 plansRouter.use(rolesRoutes);
+plansRouter.use(adLeverRoutes);

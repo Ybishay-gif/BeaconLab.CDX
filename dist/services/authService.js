@@ -276,7 +276,10 @@ export async function loginUser(email, password) {
 }
 export async function loginAdminWithCode(code) {
     await ensureAuthTablesExist();
-    if (String(code || "").trim() !== config.adminAccessCode) {
+    const provided = Buffer.from(String(code || "").trim());
+    const expected = Buffer.from(config.adminAccessCode);
+    const isValid = provided.length === expected.length && timingSafeEqual(provided, expected);
+    if (!isValid) {
         fail(401, "Invalid admin access code.");
     }
     // Resolve the Admin system role

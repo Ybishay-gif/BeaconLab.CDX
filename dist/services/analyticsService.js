@@ -49,7 +49,8 @@ function parseStrategyRules(raw, activityLeadType) {
             maxCpcUplift: Number(rule?.maxCpcUplift),
             maxCpbUplift: Number(rule?.maxCpbUplift),
             corTarget: normalizeCorTargetInput(rule?.corTarget),
-            growthStrategy: String(rule?.growthStrategy || "balanced").trim().toLowerCase()
+            growthStrategy: String(rule?.growthStrategy || "balanced").trim().toLowerCase(),
+            leverScore: Number(rule?.leverScore) || 5
         }))
             .filter((rule) => rule.name && rule.states.length > 0 && rule.segments.length > 0);
     }
@@ -678,12 +679,6 @@ async function getPriceExplorationBQ(normalized) {
           bids,
           sold,
           number_of_binds,
-          scored_policies,
-          target_cpb_total,
-          avg_profit_total,
-          avg_equity_total,
-          lifetime_premium_total,
-          lifetime_cost_total,
           number_of_quotes,
           avg_bid,
           cpc,

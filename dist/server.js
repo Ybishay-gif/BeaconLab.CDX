@@ -11,6 +11,10 @@ import { DEFAULT_ROLE_PERMISSIONS } from "./permissions.js";
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+// Trust proxy headers (Cloud Run sits behind a load balancer)
+app.set("trust proxy", 1);
+// Hide server technology fingerprint
+app.disable("x-powered-by");
 // Gzip / Brotli compression for JSON responses
 app.use(compression());
 // Security headers
@@ -20,6 +24,7 @@ app.use((_req, res, next) => {
     res.setHeader("X-XSS-Protection", "0"); // Modern browsers: rely on CSP instead
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'");
     next();
 });
 // CORS — allow Cloudflare Pages frontend and local dev
@@ -39,6 +44,11 @@ app.use(express.static(path.resolve(__dirname, "../public")));
 app.use(healthRouter);
 app.use("/api", plansRouter);
 app.use((err, _req, res, _next) => {
+    // JSON parse errors from express.json() — return generic message, don't leak parser details
+    if (err instanceof SyntaxError && "type" in err && err.type === "entity.parse.failed") {
+        res.status(400).json({ error: "Invalid request body" });
+        return;
+    }
     if (err instanceof ZodError) {
         const summary = err.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
         console.error(`[zod] Validation failed: ${summary}`);
@@ -64,6 +74,10 @@ async function runMigrations() {
         const { pgExec } = await import("./db/postgres.js");
         await pgExec("ALTER TABLE targets ADD COLUMN IF NOT EXISTS target_cor DOUBLE PRECISION NOT NULL DEFAULT 0");
         await pgExec("ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT");
+        // Add activity_type / lead_type to price_exploration_daily (pre-existing rows get '')
+        await pgExec("ALTER TABLE price_exploration_daily ADD COLUMN IF NOT EXISTS activity_type TEXT DEFAULT ''");
+        await pgExec("ALTER TABLE price_exploration_daily ADD COLUMN IF NOT EXISTS lead_type TEXT DEFAULT ''");
+        await pgExec("CREATE INDEX IF NOT EXISTS idx_ped_activity ON price_exploration_daily (activity_type, lead_type)").catch(() => { });
         // Usage analytics table
         await pgExec(`
       CREATE TABLE IF NOT EXISTS usage_events (
@@ -385,6 +399,39 @@ async function runMigrations() {
       )
     `);
         await pgExec("CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_session ON ai_chat_messages(session_id, created_at ASC)");
+        // SFTP Connections & Uploads
+        await pgExec(`
+      CREATE TABLE IF NOT EXISTS sftp_connections (
+        connection_id      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        name               TEXT NOT NULL,
+        host               TEXT NOT NULL,
+        port               INTEGER NOT NULL DEFAULT 22,
+        username           TEXT NOT NULL,
+        password_encrypted TEXT NOT NULL,
+        remote_path        TEXT NOT NULL DEFAULT '/',
+        is_active          BOOLEAN NOT NULL DEFAULT TRUE,
+        created_by         TEXT NOT NULL,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+        await pgExec("CREATE INDEX IF NOT EXISTS idx_sftp_connections_active ON sftp_connections(is_active)");
+        await pgExec(`
+      CREATE TABLE IF NOT EXISTS sftp_uploads (
+        upload_id      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        report_id      TEXT NOT NULL REFERENCES reports(report_id) ON DELETE CASCADE,
+        connection_id  TEXT NOT NULL REFERENCES sftp_connections(connection_id) ON DELETE CASCADE,
+        status         TEXT NOT NULL DEFAULT 'pending'
+                         CHECK (status IN ('pending','uploading','done','error')),
+        remote_file    TEXT,
+        error_message  TEXT,
+        initiated_by   TEXT NOT NULL,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at   TIMESTAMPTZ
+      )
+    `);
+        await pgExec("CREATE INDEX IF NOT EXISTS idx_sftp_uploads_report ON sftp_uploads(report_id)");
+        await pgExec("CREATE INDEX IF NOT EXISTS idx_sftp_uploads_status ON sftp_uploads(status)");
         console.log("Migrations OK");
     }
     catch (err) {
