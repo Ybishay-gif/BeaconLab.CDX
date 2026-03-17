@@ -7,6 +7,7 @@ import { cached, buildCacheKey } from "../cache.js";
 import { getParameterValues, upsertParameters } from "./plansService.js";
 import { buildCombinedRatioSql, buildRoeSql } from "./shared/kpiSql.js";
 import { splitCombinedFilter } from "./shared/activityScope.js";
+import { getStrategyRulesForPlan } from "./analyticsService.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -30,14 +31,18 @@ export type AdLeverPerformanceRow = {
   combined_ratio: number;
   roe: number;
   performance: number;
+  mrltv: number;
 };
 
 export type AdLeverRow = AdLeverPerformanceRow & {
   retention_nblr: number | null;
+  qltv: number | null;
   cor_score: number | null;
   q2b_score: number | null;
   retention_score: number | null;
   wr_score: number | null;
+  qltv_score: number | null;
+  strategy_score: number | null;
   final_score: number | null;
   lever: number | null;
   lever_override: number | string | null;
@@ -128,7 +133,8 @@ async function queryAdLeverPerformance(
             ELSE SAFE_DIVIDE(SUM(target_cpb_sum), SUM(binds))
           END,
           SAFE_DIVIDE(SUM(total_cost), NULLIF(SUM(binds), 0))
-        ) AS performance
+        ) AS performance,
+        SAFE_DIVIDE(SUM(lifetime_premium_sum), NULLIF(SUM(scored_policies), 0)) AS mrltv
       FROM ${table("state_segment_daily")}
       WHERE event_date BETWEEN @startDate::date AND @endDate::date
         AND (@activityType = '' OR activity_type = @activityType)
@@ -164,17 +170,27 @@ export async function getAdLeverData(filters: AdLeverFilters): Promise<AdLeverRo
   // 3. Load overrides
   const overrides = await loadOverrides(filters.planId);
 
-  // 4. Join retention value to perf rows (STATE|SEGMENT exact match, fallback to STATE average)
+  // 4. Load strategy rules for strategy_score
+  const strategyRules = await getStrategyRulesForPlan(filters.planId, filters.activityLeadType);
+
+  // 5. Join retention, compute QLTV, match strategy rule per row
   const rows: AdLeverRow[] = perfRows.map((r) => {
     const key = `${r.state}|${r.segment}`;
     const retVal = retentionMap.get(key) ?? retentionMap.get(r.state) ?? null;
+    const qltv = (r.mrltv != null && r.q2b != null) ? r.mrltv * r.q2b : null;
+    const matchedRule = strategyRules.find(
+      (rule) => rule.states.includes(r.state) && rule.segments.includes(r.segment)
+    ) ?? null;
     return {
       ...r,
       retention_nblr: retVal,
+      qltv,
       cor_score: null,
       q2b_score: null,
       retention_score: null,
       wr_score: null,
+      qltv_score: null,
+      strategy_score: matchedRule ? matchedRule.leverScore : null,
       final_score: null,
       lever: null,
       lever_override: overrides[key] ?? null,
@@ -192,6 +208,8 @@ export async function getAdLeverData(filters: AdLeverFilters): Promise<AdLeverRo
   const allWR = qualifying.map((r) => r.win_rate);
   const qualifyingWithNBLR = qualifying.filter((r) => r.retention_nblr != null);
   const allNBLR = qualifyingWithNBLR.map((r) => r.retention_nblr!);
+  const qualifyingWithQLTV = qualifying.filter((r) => r.qltv != null && r.qltv > 0);
+  const allQLTV = qualifyingWithQLTV.map((r) => r.qltv!);
 
   // 7. Score each qualifying row
   for (const row of qualifying) {
@@ -203,9 +221,15 @@ export async function getAdLeverData(filters: AdLeverFilters): Promise<AdLeverRo
       row.retention_score = scoreLowerIsBetter(allNBLR, row.retention_nblr);
     }
 
-    // Final score = average of available scores
+    if (row.qltv != null && allQLTV.length > 1) {
+      row.qltv_score = scoreHigherIsBetter(allQLTV, row.qltv);
+    }
+
+    // Final score = average of available scores (including QLTV and strategy)
     const scores = [row.cor_score, row.q2b_score, row.wr_score];
     if (row.retention_score != null) scores.push(row.retention_score);
+    if (row.qltv_score != null) scores.push(row.qltv_score);
+    if (row.strategy_score != null) scores.push(row.strategy_score);
     row.final_score = scores.reduce((a, b) => a + b, 0) / scores.length;
   }
 
