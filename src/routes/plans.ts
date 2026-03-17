@@ -15,6 +15,7 @@ import { ticketsRoutes } from "./api/ticketsRoutes.js";
 import { reportRoutes } from "./api/reportRoutes.js";
 import { sftpRoutes } from "./api/sftpRoutes.js";
 import { rolesRoutes } from "./api/rolesRoutes.js";
+import { adLeverRoutes } from "./api/adLeverRoutes.js";
 
 export const plansRouter = Router();
 
@@ -37,3 +38,4 @@ plansRouter.use(ticketsRoutes);
 plansRouter.use(reportRoutes);
 plansRouter.use(sftpRoutes);
 plansRouter.use(rolesRoutes);
+plansRouter.use(adLeverRoutes);
