@@ -10,7 +10,7 @@ import { splitCombinedFilter } from "./shared/activityScope.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type RetentionRow = { state: string; segment: string; nblr: number };
+export type RetentionRow = { state: string; segment: string; nblr: number; nb_lt_prem?: number };
 
 export type AdLeverOverrides = Record<string, number | string>; // key = "STATE|SEGMENT"
 
