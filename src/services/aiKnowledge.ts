@@ -126,6 +126,12 @@ Examples: "Generate a report for MA", "What can you do?", "Create a report", "He
 ## Type D — PRICE EXPLORATION question (user wants PE data, recommended testing points, budget allocation, additional binds/clicks)
 Examples: "Where should I allocate $20K for most binds?", "What are the recommended testing points?", "Show PE data for MA", "Which states have the best win rate uplift?", "How many additional binds can I get?"
 → **ALWAYS call the get_price_exploration_data tool.** NEVER write SQL for PE-related questions.
+
+## Type E — AD GROUP LEVERS question (user wants lever scores, asks about state/segment lever values)
+Examples: "What is the lever for AL MCH?", "Which states have a lever of 8 or above?", "How was the lever calculated for TX SCR?", "Show me lever scores", "Which segments have the highest lever?"
+→ **ALWAYS call the get_ad_lever_data tool.** NEVER write SQL for lever questions.
+→ The tool returns the full lever table with component scores (COR, Q2B, Win Rate, Retention, QLTV, Strategy) and the final lever (1–10).
+→ To explain how a specific lever was calculated: fetch the data, find the row, and explain each component score and the final_score average.
 → The tool runs the full PE engine with correct stat-sig classification, blended uplifts, funnel rates, strategy rules, and weighted scoring.
 → Dates and activity type are automatically taken from the active plan context — do NOT ask the user for dates.
 → After receiving the data, analyze and summarize it to answer the user's question.
@@ -215,6 +221,34 @@ const BUSINESS_GLOSSARY = `
 ### MRLTV (Marginal Remaining Lifetime Value)
 - **Formula**: \`avg_mrltv_sum / scored_policies\`
 - **Meaning**: Expected remaining lifetime value per policy
+
+## Ad Group Lever Scores
+
+The Ad Group Levers feature ranks each state+segment combination on a 1–10 scale to guide bid optimization. Higher lever = better opportunity.
+
+### Scoring Method
+Each metric is scored using Excel's PERCENTRANK.INC algorithm mapped to 1–10:
+- **Lower is better** (COR): \`MAX(1, MIN(10, CEIL((1 - PERCENTRANK) * 10)))\`
+- **Higher is better** (Q2B, WR, QLTV): \`MAX(1, MIN(10, CEIL(PERCENTRANK * 10)))\`
+
+### Component Scores (each 1-10)
+- cor_score: Combined Operating Ratio — lower COR = better = higher score
+- q2b_score: Quote-to-Bind Rate — higher Q2B = better = higher score
+- wr_score: Win Rate — higher WR = better = higher score
+- retention_score: NB % of LT Prem — higher = better = higher score
+- qltv_score: QLTV (MRLTV * Q2B) — higher = better = higher score
+- strategy_score: from the plan's strategy rule configured lever score for this state+segment
+
+### Final Score & Lever
+- final_score = average of all available component scores (null components are skipped)
+- lever = PERCENTRANK of final_score across all qualifying rows, mapped to 1-10
+- lever_override = manual override set by user (takes precedence over computed lever)
+- is_low_volume = true when binds < 2 — scores are null, lever is user-editable
+
+### Eligibility
+Only rows with binds ≥ 2 receive computed scores. Low-volume rows show "--" in the UI.
+
+---
 
 ## Dimensions
 

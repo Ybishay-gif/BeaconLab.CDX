@@ -11,6 +11,7 @@ import {
 } from "@google/generative-ai";
 import { createReport, getTableSchema, getFilterValues, type CreateReportInput } from "./reportService.js";
 import { getPriceExploration, type PriceExplorationFilters, type PriceExplorationRow } from "./analyticsService.js";
+import { getAdLeverData } from "./adLeverService.js";
 
 /* ------------------------------------------------------------------ */
 /*  Tool declarations — passed to Gemini so it knows what it can call  */
@@ -95,6 +96,30 @@ export const ACTION_TOOLS: FunctionDeclarationsTool = {
       },
     },
     {
+      name: "get_ad_lever_data",
+      description:
+        "Fetch pre-computed Ad Group Lever scores for all state+segment combinations. Each row has a lever score (1–10) plus component scores: COR, Q2B, Win Rate, Retention, QLTV, Strategy, and a final_score average. ALWAYS use this tool when the user asks: what is the lever for a state/segment, which states have a lever of X, how was the lever calculated for a state/segment, show me lever scores, or any question about ad group levers. The data is automatically scoped to the active plan's date range and activity type.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          states: {
+            type: SchemaType.ARRAY,
+            items: { type: SchemaType.STRING },
+            description: "Filter by state abbreviations (e.g. ['MA', 'TX']). Leave empty for all states.",
+          },
+          segments: {
+            type: SchemaType.ARRAY,
+            items: { type: SchemaType.STRING },
+            description: "Filter by segments (e.g. ['MCH', 'SCR']). Leave empty for all segments.",
+          },
+          min_lever: {
+            type: SchemaType.NUMBER,
+            description: "Return only rows where lever >= this value. E.g. 8 to find high-lever opportunities.",
+          },
+        },
+      },
+    },
+    {
       name: "get_price_exploration_data",
       description:
         "Fetch pre-computed Price Exploration (PE) data with recommended testing points. This tool runs the full PE engine which includes stat-sig classification, blended channel uplifts, funnel rates (quote rate, Q2B), expected bind changes, additional budget calculations, CPB projections, and weighted scoring for testing point selection based on strategy rules. ALWAYS use this tool instead of writing SQL when the user asks about: price exploration, recommended testing points, additional binds/clicks from PE, budget allocation based on PE, CPB projections, win rate uplifts, or any PE-related analysis. The data is automatically scoped to the active plan's date range and activity type.",
@@ -170,6 +195,8 @@ export async function executeAction(
       return await handleListReportColumns();
     case "generate_report":
       return await handleGenerateReport(args, userId);
+    case "get_ad_lever_data":
+      return await handleGetAdLeverData(args, planContext);
     case "get_price_exploration_data":
       return await handleGetPriceExplorationData(args, planContext);
     default:
@@ -325,6 +352,83 @@ async function handleGenerateReport(
         success: false,
         error: `Failed to create report: ${msg}`,
       },
+    };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Ad Lever data handler                                              */
+/* ------------------------------------------------------------------ */
+
+async function handleGetAdLeverData(
+  args: Record<string, unknown>,
+  planContext?: ActionPlanContext,
+): Promise<ActionResult> {
+  if (!planContext?.planId) {
+    return {
+      response: {
+        error: "No active plan selected. Please select a plan first so I can fetch lever data scoped to the plan's date range and activity type.",
+      },
+    };
+  }
+
+  const filterStates = (args.states as string[]) || [];
+  const filterSegments = (args.segments as string[]) || [];
+  const minLever = typeof args.min_lever === "number" ? args.min_lever : 0;
+
+  try {
+    const rows = await getAdLeverData({
+      planId: planContext.planId,
+      startDate: planContext.perfStartDate,
+      endDate: planContext.perfEndDate,
+      activityLeadType: planContext.activityLeadType,
+      qbc: 0,
+    });
+
+    // Filter and slim rows for AI
+    let result = rows.map((r) => ({
+      state: r.state,
+      segment: r.segment,
+      lever: r.lever_override ?? r.lever,
+      cor_score: r.cor_score,
+      q2b_score: r.q2b_score,
+      wr_score: r.wr_score,
+      retention_score: r.retention_score,
+      qltv_score: (r as any).qltv_score,
+      strategy_score: (r as any).strategy_score,
+      final_score: r.final_score,
+      combined_ratio: r.combined_ratio != null ? Math.round(r.combined_ratio * 1000) / 10 + "%" : null,
+      q2b: r.q2b != null ? Math.round(r.q2b * 1000) / 10 + "%" : null,
+      win_rate: r.win_rate != null ? Math.round(r.win_rate * 1000) / 10 + "%" : null,
+      binds: r.binds,
+      is_low_volume: r.is_low_volume,
+    }));
+
+    // Apply optional filters
+    if (filterStates.length > 0) {
+      result = result.filter((r) => filterStates.map((s) => s.toUpperCase()).includes(r.state));
+    }
+    if (filterSegments.length > 0) {
+      result = result.filter((r) => filterSegments.map((s) => s.toUpperCase()).includes(r.segment));
+    }
+    if (minLever > 0) {
+      result = result.filter((r) => r.lever != null && Number(r.lever) >= minLever);
+    }
+
+    return {
+      response: {
+        plan_id: planContext.planId,
+        date_range: `${planContext.perfStartDate} to ${planContext.perfEndDate}`,
+        activity_lead_type: planContext.activityLeadType,
+        total_rows: result.length,
+        scoring_note: "Lever 1–10 (higher = better opportunity). Scores: COR (lower COR = better), Q2B (higher = better), Win Rate (higher = better), Retention (higher NB% of LT Prem = better), QLTV (Q2B × MRLTV, higher = better), Strategy (from plan's strategy rule for this state+segment). final_score = average of available component scores. Rows with is_low_volume=true have insufficient data (binds < 2) and receive no computed lever.",
+        rows: result,
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      response: { error: `Failed to fetch Ad Lever data: ${msg}` },
     };
   }
 }
