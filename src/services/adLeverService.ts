@@ -164,13 +164,13 @@ export async function getAdLeverData(filters: AdLeverFilters): Promise<AdLeverRo
   // 3. Load overrides
   const overrides = await loadOverrides(filters.planId);
 
-  // 4. Join retention NBLR to perf rows
+  // 4. Join retention value to perf rows (STATE|SEGMENT exact match, fallback to STATE average)
   const rows: AdLeverRow[] = perfRows.map((r) => {
     const key = `${r.state}|${r.segment}`;
-    const nblr = retentionMap.get(key) ?? null;
+    const retVal = retentionMap.get(key) ?? retentionMap.get(r.state) ?? null;
     return {
       ...r,
-      retention_nblr: nblr,
+      retention_nblr: retVal,
       cor_score: null,
       q2b_score: null,
       retention_score: null,
@@ -243,10 +243,24 @@ async function loadRetentionMap(planId: string): Promise<Map<string, number>> {
   }
 
   const map = new Map<string, number>();
+  const stateAccum = new Map<string, number[]>();
+
   for (const row of data) {
-    const key = `${String(row.state).trim().toUpperCase()}|${String(row.segment).trim().toUpperCase()}`;
-    map.set(key, row.nblr);
+    const state = String(row.state).trim().toUpperCase();
+    const segment = String(row.segment).trim().toUpperCase();
+    // Prefer nb_lt_prem over nblr when available
+    const value = row.nb_lt_prem != null ? row.nb_lt_prem : row.nblr;
+    map.set(`${state}|${segment}`, value);
+    if (!stateAccum.has(state)) stateAccum.set(state, []);
+    stateAccum.get(state)!.push(value);
   }
+
+  // State-level average as fallback for segments not in the retention file
+  for (const [state, values] of stateAccum) {
+    const avg = values.reduce((a, b) => a + b, 0) / values.length;
+    map.set(state, avg);
+  }
+
   return map;
 }
 
