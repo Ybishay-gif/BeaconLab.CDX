@@ -74,6 +74,13 @@ export function decryptPassword(encrypted: string): string {
   return decipher.update(data) + decipher.final("utf8");
 }
 
+// ── Helpers ────────────────────────────────────────────────────────
+
+/** Strip protocol prefix (https://, http://, sftp://, ftp://) from host input */
+function sanitizeHost(host: string): string {
+  return host.replace(/^[a-z][a-z0-9+\-.]*:\/\//i, "").replace(/\/.*$/, "").trim();
+}
+
 // ── CRUD ───────────────────────────────────────────────────────────
 
 export async function listConnections(): Promise<SftpConnection[]> {
@@ -119,7 +126,7 @@ export async function createConnection(
     {
       connectionId,
       name: input.name,
-      host: input.host,
+      host: sanitizeHost(input.host),
       port: input.port,
       username: input.username,
       passwordEncrypted,
@@ -144,7 +151,7 @@ export async function updateConnection(
   }
   if (input.host !== undefined) {
     sets.push("host = @host");
-    params.host = input.host;
+    params.host = sanitizeHost(input.host);
   }
   if (input.port !== undefined) {
     sets.push("port = @port");
