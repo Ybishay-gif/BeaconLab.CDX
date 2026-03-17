@@ -262,6 +262,18 @@ async function loadOverrides(planId: string): Promise<AdLeverOverrides> {
   return {};
 }
 
+export async function getRetentionData(planId: string): Promise<RetentionRow[]> {
+  const params = await getParameterValues(planId, ["ad_lever_retention_data"]);
+  if (params.ad_lever_retention_data) {
+    try {
+      return JSON.parse(params.ad_lever_retention_data);
+    } catch {
+      return DEFAULT_RETENTION_DATA;
+    }
+  }
+  return DEFAULT_RETENTION_DATA;
+}
+
 // ── Persistence ───────────────────────────────────────────────────────────────
 
 export async function saveAdLeverOverrides(

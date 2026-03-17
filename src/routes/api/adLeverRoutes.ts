@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Request, Response, NextFunction } from "express";
 import {
   getAdLeverData,
+  getRetentionData,
   saveAdLeverOverrides,
   saveRetentionData,
   resetRetentionData,
@@ -50,6 +51,21 @@ adLeverRoutes.put("/analytics/ad-levers/overrides", async (req: Request, res: Re
     const userId = (req as any).user?.id || "system";
     await saveAdLeverOverrides(planId, userId, overrides);
     res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /analytics/ad-levers/retention — fetch current retention data for a plan
+adLeverRoutes.get("/analytics/ad-levers/retention", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const planId = typeof req.query.planId === "string" ? req.query.planId : "";
+    if (!planId) {
+      res.status(400).json({ error: "planId is required" });
+      return;
+    }
+    const rows = await getRetentionData(planId);
+    res.json({ rows });
   } catch (error) {
     next(error);
   }
