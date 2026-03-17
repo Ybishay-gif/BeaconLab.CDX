@@ -37,6 +37,7 @@ export type AdLeverPerformanceRow = {
 export type AdLeverRow = AdLeverPerformanceRow & {
   retention_nblr: number | null;
   qltv: number | null;
+  cor_target: number | null;
   cor_score: number | null;
   q2b_score: number | null;
   retention_score: number | null;
@@ -185,6 +186,7 @@ export async function getAdLeverData(filters: AdLeverFilters): Promise<AdLeverRo
       ...r,
       retention_nblr: retVal,
       qltv,
+      cor_target: matchedRule ? matchedRule.corTarget : null,
       cor_score: null,
       q2b_score: null,
       retention_score: null,
