@@ -116,6 +116,14 @@ export const ACTION_TOOLS: FunctionDeclarationsTool = {
             type: SchemaType.NUMBER,
             description: "Return only rows where lever >= this value. E.g. 8 to find high-lever opportunities.",
           },
+          start_date: {
+            type: SchemaType.STRING,
+            description: "Override start date in YYYY-MM-DD format. If the user mentions a different time period (e.g. 'look at January', 'last month'), use this to override the plan's default date range.",
+          },
+          end_date: {
+            type: SchemaType.STRING,
+            description: "Override end date in YYYY-MM-DD format. Use together with start_date to change the analysis period.",
+          },
         },
       },
     },
@@ -375,12 +383,14 @@ async function handleGetAdLeverData(
   const filterStates = (args.states as string[]) || [];
   const filterSegments = (args.segments as string[]) || [];
   const minLever = typeof args.min_lever === "number" ? args.min_lever : 0;
+  const startDate = (args.start_date as string) || planContext.perfStartDate;
+  const endDate = (args.end_date as string) || planContext.perfEndDate;
 
   try {
     const rows = await getAdLeverData({
       planId: planContext.planId,
-      startDate: planContext.perfStartDate,
-      endDate: planContext.perfEndDate,
+      startDate,
+      endDate,
       activityLeadType: planContext.activityLeadType,
       qbc: 0,
     });
@@ -418,7 +428,7 @@ async function handleGetAdLeverData(
     return {
       response: {
         plan_id: planContext.planId,
-        date_range: `${planContext.perfStartDate} to ${planContext.perfEndDate}`,
+        date_range: `${startDate} to ${endDate}`,
         activity_lead_type: planContext.activityLeadType,
         total_rows: result.length,
         scoring_note: "Lever 1–10 (higher = better opportunity). Scores: COR (lower COR = better), Q2B (higher = better), Win Rate (higher = better), Retention (higher NB% of LT Prem = better), QLTV (Q2B × MRLTV, higher = better), Strategy (from plan's strategy rule for this state+segment). final_score = average of available component scores. Rows with is_low_volume=true have insufficient data (binds < 2) and receive no computed lever.",
