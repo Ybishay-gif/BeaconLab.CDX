@@ -19,10 +19,19 @@ const planContextSchema = z.object({
   qbcLeadsCalls: z.number().optional(),
 }).optional();
 
+const attachmentSchema = z.object({
+  filename: z.string().min(1).max(255),
+  mimeType: z.string().min(1),
+  sizeBytes: z.number().max(3 * 1024 * 1024),
+  data: z.string(),
+});
+
 const aiChatSchema = z.object({
   message: z.string().min(1).max(2000),
   sessionId: z.string().min(1).max(100),
   planContext: planContextSchema,
+  attachments: z.array(attachmentSchema).max(3).optional(),
+  currentPath: z.string().max(500).optional(),
 });
 
 export const aiChatRoutes = Router();
@@ -35,8 +44,14 @@ aiChatRoutes.post("/ai-chat", async (req, res, next) => {
       return;
     }
 
-    const { message, sessionId, planContext } = aiChatSchema.parse(req.body);
-    const result = await handleAiChat(message, sessionId, req.user!.userId, planContext as PlanContext | undefined);
+    const { message, sessionId, planContext, attachments, currentPath } = aiChatSchema.parse(req.body);
+    const userObj = {
+      userId: req.user!.userId,
+      email: req.user!.email ?? "",
+      permissions: req.user!.permissions ?? [],
+    };
+    const ctx = planContext ? { ...planContext, currentPath } as PlanContext : currentPath ? { currentPath } as PlanContext : undefined;
+    const result = await handleAiChat(message, sessionId, userObj, ctx, attachments);
     res.json(result);
   } catch (error) {
     // Friendly error messages for common Gemini failures

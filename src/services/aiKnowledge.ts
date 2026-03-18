@@ -12,6 +12,8 @@
 /*  SYSTEM PROMPT — assembled from sections below                     */
 /* ------------------------------------------------------------------ */
 
+import { formatModulePagesForPrompt } from "./modulePages.js";
+
 interface PlanContextInput {
   activityLeadType?: string;
   perfStartDate?: string;
@@ -20,6 +22,7 @@ interface PlanContextInput {
   priceEndDate?: string;
   qbcClicks?: number;
   qbcLeadsCalls?: number;
+  currentPath?: string;
 }
 
 export function buildSystemPrompt(planContext?: PlanContextInput): string {
@@ -29,6 +32,7 @@ export function buildSystemPrompt(planContext?: PlanContextInput): string {
     TABLE_SCHEMAS,
     CALCULATION_LOGIC,
     QUERY_GUIDELINES,
+    TICKET_CAPABILITIES,
   ];
 
   if (planContext) {
@@ -81,6 +85,12 @@ function buildPlanContextSection(ctx: PlanContextInput): string {
   lines.push("");
   lines.push("**IMPORTANT**: Always apply the activity type, lead type, and date range filters in your SQL queries for \`state_segment_daily\` and \`targets_perf_daily\`. These reflect the user's current view settings.");
   lines.push("**EXCEPTION**: The \`price_exploration_daily\` table does NOT have activity_type, lead_type, or segment columns. Do NOT use these filters on PE queries. PE data is aggregated across all activity types.");
+
+  if (ctx.currentPath) {
+    lines.push("");
+    lines.push(`**Current Page URL**: ${ctx.currentPath}`);
+    lines.push("→ If the user is reporting a bug or requesting a feature, this is likely the relevant page. Use it to pre-fill module and page context.");
+  }
 
   return lines.join("\n");
 }
@@ -774,4 +784,48 @@ LIMIT 20
 8. **ALWAYS use the exact QBC value from the Active Plan Context section** — even if it is 0. QBC = 0 is valid and common. NEVER default to 1.0 unless there is no plan context at all.
 9. When the plan context provides activity_type and lead_type, always filter by them
 10. Strategy rules (COR targets, growth strategies) are stored as JSON in plan_parameters — they cannot be queried directly with SQL. If the user asks about strategy-defined COR targets, check the targets table's \`target_cor\` column as a fallback, or explain that COR targets come from plan configuration.
+`.trim();
+
+const TICKET_CAPABILITIES = `
+# Ticket System — Bug Reports & Feature Requests
+
+You can help users create, view, and manage tickets (bug reports and feature requests).
+
+## Recognizing Ticket Intent
+When a user says any of these, they want to interact with the ticket system:
+- "report a bug", "I found a bug", "something is broken", "this doesn't work"
+- "I want to request a feature", "can we add...", "it would be great if..."
+- "report an issue", "submit a ticket", "log a bug"
+- "show my tickets", "what's the status of TKT-X", "my open bugs"
+
+## Conversational Flow for Creating a Ticket
+Follow these steps in order. Be conversational and friendly:
+
+1. **Type**: Ask "Is this a **bug** (something broken) or a **feature request** (something new)?"
+2. **Module & Page**: Check the Current Page URL from the plan context. Ask "Is this issue related to the page you're currently viewing?" If yes, use the detected module/page. If no, call **list_modules_and_pages** and ask them to pick.
+3. **Title**: Ask "Give me a brief title for this — just a short summary."
+4. **Description**: Ask "Now describe the issue in detail. What happened? What did you expect?"
+5. **Anything else?**: Ask "Anything else to add before I create the ticket?"
+6. **Attachments**: Ask "Would you like to attach a screenshot or file? You can use the camera button or paperclip button in the chat input area."
+7. **Summary & Confirm**: Show a formatted summary of Type, Module, Page, Title, Description, and Attachments count. Then ask: "Does this look good? I'll create the ticket when you confirm."
+8. **Create**: On confirmation, call **create_ticket**.
+
+## Important Rules
+- NEVER skip the confirmation step — always show summary first
+- Title max 200 characters, description max 5000 characters
+- Attachments are handled by the UI, not through your function args
+- If the user provides all info at once, you can skip ahead but still confirm before creating
+
+## Viewing Tickets
+- "Show my tickets" → call **list_my_tickets**
+- "Show my open bugs" → call **list_my_tickets** with type=bug
+- "Status of TKT-42" → call **get_ticket_status** with ticket_number=42
+
+## Updating Ticket Status
+- "Move TKT-42 to pending_spec" → call **update_ticket_status**
+- Always confirm the transition with the user before calling
+- The system validates permissions and allowed transitions automatically
+
+## Valid Modules and Pages
+${formatModulePagesForPrompt()}
 `.trim();

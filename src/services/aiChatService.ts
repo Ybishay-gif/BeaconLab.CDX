@@ -1,7 +1,8 @@
 import { GoogleGenerativeAI, type Content } from "@google/generative-ai";
 import { query, table } from "../db/index.js";
 import { buildSystemPrompt } from "./aiKnowledge.js";
-import { ACTION_TOOLS, executeAction, type ActionResult, type ActionPlanContext } from "./aiActions.js";
+import { ACTION_TOOLS, executeAction, type ActionResult, type ActionPlanContext, type ActionUser } from "./aiActions.js";
+import type { Attachment } from "./ticketsService.js";
 import {
   ensureSession,
   saveMessage,
@@ -204,6 +205,7 @@ export interface PlanContext {
   priceEndDate?: string;
   qbcClicks?: number;
   qbcLeadsCalls?: number;
+  currentPath?: string;
 }
 
 /** Persist user + model messages to DB (fire-and-forget, non-blocking) */
@@ -231,8 +233,9 @@ async function persistMessages(
 export async function handleAiChat(
   message: string,
   sessionId: string,
-  userId: string,
+  user: ActionUser,
   planContext?: PlanContext,
+  attachments?: Attachment[],
 ): Promise<AiChatResponse> {
   const genAI = getGenAI();
   const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
@@ -240,9 +243,9 @@ export async function handleAiChat(
 
   // Ensure session exists in DB and hydrate in-memory history
   if (config.usePg) {
-    await ensureSession(sessionId, userId);
+    await ensureSession(sessionId, user.userId);
   }
-  const session = await hydrateSession(sessionId, userId);
+  const session = await hydrateSession(sessionId, user.userId);
   const firstPart = session.history[0]?.parts[0];
   const isFirstMessage = session.history.length === 0 ||
     (session.history.length === 2 && firstPart && "text" in firstPart && (firstPart.text ?? "").startsWith("[Previous conversation"));
@@ -271,9 +274,10 @@ export async function handleAiChat(
       session,
       functionCallPart.functionCall.name,
       (functionCallPart.functionCall.args as Record<string, unknown>) || {},
-      userId,
+      user,
       { sessionId, userMessage: message, isFirstMessage },
       planContext,
+      attachments,
     );
   }
 
@@ -295,7 +299,7 @@ export async function handleAiChat(
     // Direct answer (no data query needed)
     session.history.push({ role: "model", parts: [{ text: pass1Text }] });
     trimHistory(session);
-    await persistMessages(sessionId, userId, message, pass1Text, undefined, undefined, isFirstMessage);
+    await persistMessages(sessionId, user.userId, message, pass1Text, undefined, undefined, isFirstMessage);
     return { answer: pass1Text };
   }
 
@@ -329,13 +333,13 @@ export async function handleAiChat(
         const execRetry = qualifyTableNames(retrySql.includes("LIMIT") ? retrySql : `${retrySql}\nLIMIT 100`);
         queryResults = await query<Record<string, unknown>>(execRetry);
         // Fall through to pass 2 with retried results
-        return await summarizeResults(chat, session, queryResults, retrySql, { sessionId, userId, userMessage: message, isFirstMessage });
+        return await summarizeResults(chat, session, queryResults, retrySql, { sessionId, userId: user.userId, userMessage: message, isFirstMessage });
       } catch {
         // Both attempts failed
         const failMsg = `I tried to query the data but encountered an error. ${retryText}`;
         session.history.push({ role: "model", parts: [{ text: failMsg }] });
         trimHistory(session);
-        await persistMessages(sessionId, userId, message, failMsg, retrySql, undefined, isFirstMessage);
+        await persistMessages(sessionId, user.userId, message, failMsg, retrySql, undefined, isFirstMessage);
         return { answer: failMsg, sql: retrySql };
       }
     }
@@ -343,12 +347,12 @@ export async function handleAiChat(
     // Gemini explained the error instead of retrying
     session.history.push({ role: "model", parts: [{ text: retryText }] });
     trimHistory(session);
-    await persistMessages(sessionId, userId, message, retryText, sql, undefined, isFirstMessage);
+    await persistMessages(sessionId, user.userId, message, retryText, sql, undefined, isFirstMessage);
     return { answer: retryText, sql };
   }
 
   // --- Pass 2: Summarize results ---
-  return await summarizeResults(chat, session, queryResults, sql, { sessionId, userId, userMessage: message, isFirstMessage });
+  return await summarizeResults(chat, session, queryResults, sql, { sessionId, userId: user.userId, userMessage: message, isFirstMessage });
 }
 
 /* ------------------------------------------------------------------ */
@@ -360,9 +364,10 @@ async function handleFunctionCall(
   session: Session,
   functionName: string,
   args: Record<string, unknown>,
-  userId: string,
+  user: ActionUser,
   persistCtx?: { sessionId: string; userMessage: string; isFirstMessage: boolean },
   planContext?: PlanContext,
+  attachments?: Attachment[],
 ): Promise<AiChatResponse> {
   const MAX_TOOL_ROUNDS = 5; // prevent infinite loops
   let currentName = functionName;
@@ -382,10 +387,10 @@ async function handleFunctionCall(
     : undefined;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    // Execute the action
+    // Execute the action — pass attachments for create_ticket
     let actionResult: ActionResult;
     try {
-      actionResult = await executeAction(currentName, currentArgs, userId, actionPlanCtx);
+      actionResult = await executeAction(currentName, currentArgs, user, actionPlanCtx, attachments);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       actionResult = { response: { error: `Action failed: ${msg}` } };
@@ -424,7 +429,7 @@ async function handleFunctionCall(
     trimHistory(session);
 
     if (persistCtx) {
-      await persistMessages(persistCtx.sessionId, userId, persistCtx.userMessage, answer, undefined, lastAction, persistCtx.isFirstMessage);
+      await persistMessages(persistCtx.sessionId, user.userId, persistCtx.userMessage, answer, undefined, lastAction, persistCtx.isFirstMessage);
     }
 
     return {
@@ -438,7 +443,7 @@ async function handleFunctionCall(
   session.history.push({ role: "model", parts: [{ text: fallback }] });
   trimHistory(session);
   if (persistCtx) {
-    await persistMessages(persistCtx.sessionId, userId, persistCtx.userMessage, fallback, undefined, lastAction, persistCtx.isFirstMessage);
+    await persistMessages(persistCtx.sessionId, user.userId, persistCtx.userMessage, fallback, undefined, lastAction, persistCtx.isFirstMessage);
   }
   return { answer: fallback, action: lastAction };
 }

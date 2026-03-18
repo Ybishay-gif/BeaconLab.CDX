@@ -12,6 +12,9 @@ import {
 import { createReport, getTableSchema, getFilterValues, type CreateReportInput } from "./reportService.js";
 import { getPriceExploration, type PriceExplorationFilters, type PriceExplorationRow } from "./analyticsService.js";
 import { getAdLeverData } from "./adLeverService.js";
+import { createTicket, listTickets, getTicket, updateTicket, STATUS_TRANSITIONS, type Attachment, type TicketStatus } from "./ticketsService.js";
+import { MODULE_PAGES, formatModulePagesForPrompt } from "./modulePages.js";
+import { query, table } from "../db/index.js";
 
 /* ------------------------------------------------------------------ */
 /*  Tool declarations — passed to Gemini so it knows what it can call  */
@@ -155,6 +158,99 @@ export const ACTION_TOOLS: FunctionDeclarationsTool = {
         },
       },
     },
+    /* ---- Ticket tools ---- */
+    {
+      name: "create_ticket",
+      description:
+        "Create a bug report or feature request ticket. ONLY call this after you have gathered ALL required information from the user through conversation: type (bug/feature), title, description, module, and page. Attachments (screenshots, files) are handled separately by the frontend — tell the user to use the camera or paperclip buttons in the input area before confirming. Always show a summary and get explicit confirmation before calling this tool.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          type: {
+            type: SchemaType.STRING,
+            description: "Ticket type: 'bug' or 'feature'",
+          },
+          title: {
+            type: SchemaType.STRING,
+            description: "Brief summary of the issue or request (max 200 characters)",
+          },
+          description: {
+            type: SchemaType.STRING,
+            description: "Detailed description of the bug or feature request (max 5000 characters)",
+          },
+          module: {
+            type: SchemaType.STRING,
+            description: "The moduleId where the issue occurs (e.g. 'planning', 'channel_recommendations', 'settings'). Use list_modules_and_pages if unsure.",
+          },
+          page: {
+            type: SchemaType.STRING,
+            description: "The page name where the issue occurs (e.g. 'Plan Builder', 'Targets'). Use list_modules_and_pages if unsure.",
+          },
+        },
+        required: ["type", "title", "description", "module", "page"],
+      },
+    },
+    {
+      name: "list_my_tickets",
+      description:
+        "List tickets created by the current user. Use when the user asks about their tickets, open bugs, feature requests, or ticket history.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          status: {
+            type: SchemaType.STRING,
+            description: "Filter by status (e.g. 'todo', 'pending_spec', 'deployed', 'done'). Leave empty for all statuses.",
+          },
+          type: {
+            type: SchemaType.STRING,
+            description: "Filter by type: 'bug' or 'feature'. Leave empty for both.",
+          },
+          limit: {
+            type: SchemaType.NUMBER,
+            description: "Max tickets to return (default 10).",
+          },
+        },
+      },
+    },
+    {
+      name: "get_ticket_status",
+      description:
+        "Get the full details and current status of a specific ticket by its TKT number. Use when the user asks about a specific ticket like 'What is the status of TKT-42?'.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          ticket_number: {
+            type: SchemaType.NUMBER,
+            description: "The ticket number (e.g. 42 for TKT-42)",
+          },
+        },
+        required: ["ticket_number"],
+      },
+    },
+    {
+      name: "update_ticket_status",
+      description:
+        "Update the status of a ticket. Validates that the transition is allowed by the workflow. Requires appropriate permissions — ticket owners can advance their own tickets, admins can approve. Always confirm the new status with the user before calling.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          ticket_number: {
+            type: SchemaType.NUMBER,
+            description: "The ticket number (e.g. 42 for TKT-42)",
+          },
+          new_status: {
+            type: SchemaType.STRING,
+            description: "The new status to transition to. Valid statuses: todo, pending_spec, pending_spec_approval, spec_approved, adjusted_spec, pending_deployment, deployment_approved, deployed, done, reopened",
+          },
+        },
+        required: ["ticket_number", "new_status"],
+      },
+    },
+    {
+      name: "list_modules_and_pages",
+      description:
+        "List all available modules and their pages in the platform. Use this when helping a user create a ticket and you need to confirm the correct module and page name.",
+    },
   ],
 };
 
@@ -167,7 +263,7 @@ export interface ActionResult {
   response: Record<string, unknown>;
   /** Metadata sent to the frontend for rendering action UI */
   action?: {
-    type: "report_created" | "action_list";
+    type: "report_created" | "action_list" | "ticket_created" | "ticket_list" | "ticket_detail" | "ticket_updated";
     payload: unknown;
   };
 }
@@ -188,11 +284,19 @@ export interface ActionPlanContext {
 /*  Execution handlers                                                 */
 /* ------------------------------------------------------------------ */
 
+/** User context for tools that need permissions or identity */
+export interface ActionUser {
+  userId: string;
+  email: string;
+  permissions: string[];
+}
+
 export async function executeAction(
   actionName: string,
   args: Record<string, unknown>,
-  userId: string,
+  user: ActionUser,
   planContext?: ActionPlanContext,
+  attachments?: Attachment[],
 ): Promise<ActionResult> {
   switch (actionName) {
     case "list_available_actions":
@@ -202,11 +306,21 @@ export async function executeAction(
     case "list_report_columns":
       return await handleListReportColumns();
     case "generate_report":
-      return await handleGenerateReport(args, userId);
+      return await handleGenerateReport(args, user.userId);
     case "get_ad_lever_data":
       return await handleGetAdLeverData(args, planContext);
     case "get_price_exploration_data":
       return await handleGetPriceExplorationData(args, planContext);
+    case "create_ticket":
+      return await handleCreateTicket(args, user, attachments);
+    case "list_my_tickets":
+      return await handleListMyTickets(args, user);
+    case "get_ticket_status":
+      return await handleGetTicketStatus(args);
+    case "update_ticket_status":
+      return await handleUpdateTicketStatus(args, user);
+    case "list_modules_and_pages":
+      return handleListModulesAndPages();
     default:
       return {
         response: { error: `Unknown action: ${actionName}` },
@@ -220,6 +334,16 @@ function handleListActions(): ActionResult {
       name: "Generate Report",
       description: "Create a custom CSV report from the Cross Tactic Analysis data. You can filter by date range, states, channels, and accounts.",
       example: "Generate a report for MA and TX for the last 30 days",
+    },
+    {
+      name: "Report a Bug",
+      description: "Report a bug or request a feature. I'll guide you through the process step by step.",
+      example: "I want to report a bug",
+    },
+    {
+      name: "Check My Tickets",
+      description: "View your submitted tickets and their current status.",
+      example: "Show my open tickets",
     },
   ];
 
@@ -603,4 +727,227 @@ async function handleGetPriceExplorationData(
       },
     };
   }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Ticket tool handlers                                               */
+/* ------------------------------------------------------------------ */
+
+async function handleCreateTicket(
+  args: Record<string, unknown>,
+  user: ActionUser,
+  attachments?: Attachment[],
+): Promise<ActionResult> {
+  if (!user.permissions.includes("tickets:add")) {
+    return {
+      response: { error: "You don't have permission to create tickets. Contact an admin to get the 'tickets:add' permission." },
+    };
+  }
+
+  const ticketType = args.type as "bug" | "feature";
+  const title = args.title as string;
+  const description = (args.description as string) || "";
+  const module = args.module as string;
+  const page = args.page as string;
+
+  if (!ticketType || !title || !module || !page) {
+    return { response: { error: "Missing required fields: type, title, module, and page are all required." } };
+  }
+
+  try {
+    const result = await createTicket(
+      { userId: user.userId, email: user.email },
+      { type: ticketType, title, description, module, page, attachments },
+    );
+    return {
+      response: {
+        success: true,
+        ticket_number: result.ticketNumber,
+        ticket_id: result.ticketId,
+        message: `Ticket TKT-${result.ticketNumber} created successfully!`,
+      },
+      action: {
+        type: "ticket_created",
+        payload: { ticketNumber: result.ticketNumber, ticketId: result.ticketId, title },
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { response: { error: `Failed to create ticket: ${msg}` } };
+  }
+}
+
+async function handleListMyTickets(
+  args: Record<string, unknown>,
+  user: ActionUser,
+): Promise<ActionResult> {
+  const status = args.status as string | undefined;
+  const type = args.type as string | undefined;
+  const limit = typeof args.limit === "number" ? args.limit : 10;
+
+  try {
+    const tickets = await listTickets({
+      createdBy: user.userId,
+      status,
+      type,
+      limit,
+    });
+
+    const slim = tickets.map((t) => ({
+      ticket_number: t.ticket_number,
+      title: t.title,
+      type: t.type,
+      status: t.status,
+      module: t.module,
+      page: t.page,
+      created_at: t.created_at,
+    }));
+
+    return {
+      response: {
+        total: slim.length,
+        tickets: slim,
+      },
+      action: {
+        type: "ticket_list",
+        payload: slim,
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { response: { error: `Failed to list tickets: ${msg}` } };
+  }
+}
+
+async function handleGetTicketStatus(
+  args: Record<string, unknown>,
+): Promise<ActionResult> {
+  const ticketNumber = args.ticket_number as number;
+  if (!ticketNumber) {
+    return { response: { error: "ticket_number is required" } };
+  }
+
+  try {
+    // Query by ticket_number
+    const rows = await query<{ ticket_id: string }>(
+      `SELECT ticket_id FROM ${table("tickets")} WHERE ticket_number = @ticketNumber`,
+      { ticketNumber },
+    );
+    if (rows.length === 0) {
+      return { response: { error: `Ticket TKT-${ticketNumber} not found.` } };
+    }
+
+    const ticket = await getTicket(rows[0].ticket_id);
+    if (!ticket) {
+      return { response: { error: `Ticket TKT-${ticketNumber} not found.` } };
+    }
+
+    const detail = {
+      ticket_number: ticket.ticket_number,
+      title: ticket.title,
+      type: ticket.type,
+      status: ticket.status,
+      module: ticket.module,
+      page: ticket.page,
+      description: ticket.description,
+      created_by_email: ticket.created_by_email,
+      assigned_to: ticket.assigned_to,
+      complexity: ticket.complexity,
+      created_at: ticket.created_at,
+      updated_at: ticket.updated_at,
+      resolved_at: ticket.resolved_at,
+      resolution_notes: ticket.resolution_notes,
+      valid_next_statuses: STATUS_TRANSITIONS[ticket.status as TicketStatus] || [],
+    };
+
+    return {
+      response: detail,
+      action: {
+        type: "ticket_detail",
+        payload: detail,
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { response: { error: `Failed to get ticket: ${msg}` } };
+  }
+}
+
+async function handleUpdateTicketStatus(
+  args: Record<string, unknown>,
+  user: ActionUser,
+): Promise<ActionResult> {
+  const ticketNumber = args.ticket_number as number;
+  const newStatus = args.new_status as string;
+
+  if (!ticketNumber || !newStatus) {
+    return { response: { error: "ticket_number and new_status are required." } };
+  }
+
+  try {
+    // Look up ticket by number
+    const rows = await query<{ ticket_id: string; status: string; created_by: string }>(
+      `SELECT ticket_id, status, created_by FROM ${table("tickets")} WHERE ticket_number = @ticketNumber`,
+      { ticketNumber },
+    );
+    if (rows.length === 0) {
+      return { response: { error: `Ticket TKT-${ticketNumber} not found.` } };
+    }
+
+    const { ticket_id, status: currentStatus, created_by } = rows[0];
+
+    // Validate transition
+    const allowed = STATUS_TRANSITIONS[currentStatus as TicketStatus] || [];
+    if (!allowed.includes(newStatus as TicketStatus)) {
+      return {
+        response: {
+          error: `Cannot transition from '${currentStatus}' to '${newStatus}'. Valid transitions: ${allowed.join(", ") || "none (terminal status)"}`,
+        },
+      };
+    }
+
+    // Permission check: approval statuses need tickets:approve
+    const approvalStatuses = ["spec_approved", "adjusted_spec", "deployment_approved"];
+    if (approvalStatuses.includes(newStatus) && !user.permissions.includes("tickets:approve")) {
+      return { response: { error: `Status '${newStatus}' requires 'tickets:approve' permission.` } };
+    }
+
+    // Owner or admin can update
+    const isOwner = created_by === user.userId;
+    const isAdmin = user.permissions.includes("tickets:approve");
+    if (!isOwner && !isAdmin) {
+      return { response: { error: "You can only update tickets you created, or you need 'tickets:approve' permission." } };
+    }
+
+    await updateTicket(ticket_id, { status: newStatus as TicketStatus }, { userId: user.userId, email: user.email });
+
+    return {
+      response: {
+        success: true,
+        ticket_number: ticketNumber,
+        old_status: currentStatus,
+        new_status: newStatus,
+        message: `TKT-${ticketNumber} status updated from '${currentStatus}' to '${newStatus}'.`,
+      },
+      action: {
+        type: "ticket_updated",
+        payload: { ticketNumber, oldStatus: currentStatus, newStatus },
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { response: { error: `Failed to update ticket: ${msg}` } };
+  }
+}
+
+function handleListModulesAndPages(): ActionResult {
+  return {
+    response: {
+      modules: MODULE_PAGES.map((m) => ({
+        moduleId: m.moduleId,
+        moduleLabel: m.moduleLabel,
+        pages: m.pages,
+      })),
+    },
+  };
 }
