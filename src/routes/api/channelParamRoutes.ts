@@ -58,6 +58,52 @@ const saveSchema = z.object({
   values: valuesSchema,
 });
 
+/** Map BQ tactic/vertical to the activityLeadType key used by audit log */
+function deriveActivityLeadType(tactic: string, vertical: string): string | undefined {
+  const actMap: Record<string, string> = { Click: "clicks", Lead: "leads", Call: "calls" };
+  const ltMap: Record<string, string> = { CAR_INSURANCE_LEAD: "auto", HOME_INSURANCE_LEAD: "home" };
+  const act = actMap[tactic];
+  const lt = ltMap[vertical];
+  if (act && lt) return `${act}_${lt}`;
+  return undefined;
+}
+
+/** Human-readable labels for channel_param field keys */
+const CHANNEL_PARAM_FIELD_LABELS: Record<string, string> = {
+  roe_poor: "ROE Poor",
+  roe_minimal: "ROE Minimal",
+  roe_0: "ROE 0",
+  roe_good: "ROE Good",
+  roe_excellent: "ROE Excellent",
+  roe_amazing: "ROE Amazing",
+  per_poor: "Performance Poor",
+  per_minimal: "Performance Minimal",
+  per_good: "Performance Good",
+  per_excellent: "Performance Excellent",
+  per_amazing: "Performance Amazing",
+  Poor_WR: "Win Rate Poor",
+  Low_WR: "Win Rate Low",
+  OK_WR: "Win Rate OK",
+  High_WR: "Win Rate High",
+  VHigh_WR: "Win Rate VHigh",
+  QuoteRate_poor: "Quote Rate Poor",
+  QuoteRate_minimal: "Quote Rate Minimal",
+  QuoteRate_good: "Quote Rate Good",
+  QuoteRate_excellent: "Quote Rate Excellent",
+  QuoteRate_amazing: "Quote Rate Amazing",
+  early_funnel_start_days: "Undeveloped Period Start",
+  early_funnel_end_days: "Undeveloped Period End",
+  early_cmp_funnel_start_days: "Compared Date Start",
+  early_cmp_funnel_end_days: "Compared Date End",
+  perf_start_days: "Developed Period Start",
+  perf_end_days: "Developed Period End",
+  QBC: "QBC",
+  minimal_cost: "Minimal Cost",
+  mid_cost: "Mid Cost",
+  high_cost: "High Cost",
+  vhigh_cost: "Very High Cost",
+};
+
 export const channelParamRoutes = Router();
 
 /* GET /channel-params/filters?tactic=...&vertical=... */
@@ -110,6 +156,7 @@ channelParamRoutes.put(
       // Log each changed field as a separate audit row
       const user = { userId: req.user!.userId, email: req.user!.email };
       const objectId = `${tactic}/${vertical}/${segment}`;
+      const activityLeadType = deriveActivityLeadType(tactic, vertical);
       const changedFields: string[] = [];
 
       for (const key of Object.keys(values) as (keyof ChannelParamValues)[]) {
@@ -117,13 +164,14 @@ channelParamRoutes.put(
         const newVal = Number(values[key]);
         if (oldVal !== newVal) {
           changedFields.push(key);
+          const fieldLabel = CHANNEL_PARAM_FIELD_LABELS[key] ?? key;
           appendChangeLog(user, {
             objectType: "channel_param",
             objectId,
             action: "update_field",
-            before: { field: key, value: oldVal },
-            after: { field: key, value: newVal },
-            metadata: { tactic, vertical, segment },
+            before: { field: key, fieldLabel, value: oldVal },
+            after: { field: key, fieldLabel, value: newVal },
+            metadata: { tactic, vertical, segment, activityLeadType },
             module: "channel_recommendations",
           }).catch(console.error);
         }
