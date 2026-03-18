@@ -11,10 +11,10 @@ import {
 } from "../../services/authService.js";
 import { VALID_MODULE_IDS } from "../../modules.js";
 
-// Rate limit: max 10 login attempts per IP per 15-minute window
+// Rate limit: max 30 login attempts per IP per 15-minute window
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many login attempts. Please try again later." },
@@ -51,7 +51,7 @@ authRoutes.post("/auth/admin-login", loginLimiter, async (req, res, next) => {
   }
 });
 
-authRoutes.post("/auth/user-status", loginLimiter, async (req, res, next) => {
+authRoutes.post("/auth/user-status", async (req, res, next) => {
   try {
     const parsed = userStatusSchema.parse(req.body);
     const state = await getUserLoginState(parsed.email);
