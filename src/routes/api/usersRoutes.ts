@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requirePermission } from "../../middleware/auth.js";
-import { addManagedUser, listManagedUsers, resetManagedUserPassword, setUserModules, updateUserRole } from "../../services/authService.js";
+import { addManagedUser, listManagedUsers, resetManagedUserPassword, setUserModules, updateUserRole, setUserActive } from "../../services/authService.js";
 import { VALID_MODULE_IDS } from "../../modules.js";
 
 const addUserSchema = z.object({
@@ -18,6 +18,10 @@ const updateModulesSchema = z.object({
 
 const updateRoleSchema = z.object({
   roleId: z.string().min(1),
+});
+
+const updateActiveSchema = z.object({
+  active: z.boolean(),
 });
 
 export const usersRoutes = Router();
@@ -72,6 +76,21 @@ usersRoutes.put("/users/:userId/role", requirePermission("user_management:edit")
   try {
     const parsed = updateRoleSchema.parse(req.body);
     await updateUserRole(req.params.userId, parsed.roleId);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+usersRoutes.put("/users/:userId/active", requirePermission("user_management:edit"), async (req, res, next) => {
+  try {
+    // Prevent deactivating yourself
+    if (req.params.userId === req.user?.userId) {
+      res.status(400).json({ error: "You cannot deactivate yourself." });
+      return;
+    }
+    const parsed = updateActiveSchema.parse(req.body);
+    await setUserActive(req.params.userId, parsed.active);
     res.json({ ok: true });
   } catch (error) {
     next(error);

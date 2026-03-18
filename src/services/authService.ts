@@ -478,6 +478,67 @@ export async function logoutSession(token: string): Promise<void> {
   );
 }
 
+/**
+ * Delete all sessions for a user and clear them from the in-memory cache.
+ * Called when a user is deactivated to ensure immediate logout.
+ */
+export async function invalidateUserSessions(userId: string): Promise<number> {
+  await ensureAuthTablesExist();
+
+  // Fetch tokens first so we can purge the in-memory cache
+  const tokens = await query<{ session_token: string }>(
+    `SELECT session_token FROM ${table("auth_sessions")} WHERE user_id = @userId`,
+    { userId }
+  );
+  for (const t of tokens) sessionCache.delete(t.session_token);
+
+  // Delete from DB
+  await query(
+    `DELETE FROM ${table("auth_sessions")} WHERE user_id = @userId`,
+    { userId }
+  );
+  return tokens.length;
+}
+
+/**
+ * Set a user's is_active flag. When deactivating, also invalidates all sessions.
+ */
+export async function setUserActive(userId: string, active: boolean): Promise<void> {
+  const rows = await query<{ user_id: string; role: string }>(
+    `SELECT user_id, role FROM ${table("users")} WHERE user_id = @userId`,
+    { userId }
+  );
+  if (rows.length === 0) {
+    const error = new Error("User not found.") as Error & { status: number };
+    error.status = 404;
+    throw error;
+  }
+
+  // Prevent deactivating the last active admin
+  if (!active && rows[0].role === "admin") {
+    const admins = await query<{ cnt: string }>(
+      `SELECT COUNT(*)::text AS cnt FROM ${table("users")} WHERE role = 'admin' AND is_active = TRUE AND user_id != @userId`,
+      { userId }
+    );
+    if (parseInt(admins[0]?.cnt ?? "0", 10) === 0) {
+      const error = new Error("Cannot deactivate the last active admin.") as Error & { status: number };
+      error.status = 400;
+      throw error;
+    }
+  }
+
+  await query(
+    `UPDATE ${table("users")} SET is_active = @active, updated_at = NOW() WHERE user_id = @userId`,
+    { userId, active }
+  );
+
+  // If deactivating, kill all sessions immediately
+  if (!active) {
+    const killed = await invalidateUserSessions(userId);
+    console.log(`Deactivated user ${userId}, invalidated ${killed} session(s)`);
+  }
+}
+
 // ── Module access ────────────────────────────────────────────────
 export async function getUserModules(userId: string): Promise<string[]> {
   if (!config.usePg) return VALID_MODULE_IDS; // BQ: no module table, grant all
