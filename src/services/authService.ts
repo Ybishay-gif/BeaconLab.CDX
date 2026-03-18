@@ -256,15 +256,15 @@ async function createSession(user: SessionUser): Promise<{ token: string; expire
 
 export async function getUserLoginState(
   email: string
-): Promise<{ exists: boolean; requiresPasswordSetup: boolean }> {
+): Promise<{ exists: boolean; hasPassword: boolean }> {
   await ensureAuthTablesExist();
   const user = await getUserByEmail(email);
   if (!user || !user.is_active) {
-    return { exists: false, requiresPasswordSetup: false };
+    return { exists: false, hasPassword: false };
   }
   const credential = await getCredentialsByUserId(user.user_id);
-  const requiresPasswordSetup = !credential?.password_hash || !credential?.password_salt;
-  return { exists: true, requiresPasswordSetup };
+  const hasPassword = !!(credential?.password_hash && credential?.password_salt);
+  return { exists: true, hasPassword };
 }
 
 export async function setupUserPassword(
