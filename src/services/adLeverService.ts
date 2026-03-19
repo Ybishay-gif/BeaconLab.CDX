@@ -156,6 +156,10 @@ export async function getAdLeverData(filters: AdLeverFilters): Promise<AdLeverRo
   const scope = splitCombinedFilter(filters.activityLeadType);
   const qbc = filters.qbc ?? 0;
 
+  // Home activity types (clicks_home, leads_home, calls_home) exclude
+  // retention data and strategy score from the lever formula.
+  const isHome = scope.leadType === "home";
+
   // 1. Fetch performance data
   const perfRows = await queryAdLeverPerformance(
     startDate,
@@ -165,23 +169,23 @@ export async function getAdLeverData(filters: AdLeverFilters): Promise<AdLeverRo
     qbc
   );
 
-  // 2. Load retention data (plan-specific or default)
-  const retentionMap = await loadRetentionMap(filters.planId);
+  // 2. Load retention data (skip for home — no retention data applies)
+  const retentionMap = isHome ? new Map<string, number>() : await loadRetentionMap(filters.planId);
 
   // 3. Load overrides
   const overrides = await loadOverrides(filters.planId);
 
-  // 4. Load strategy rules for strategy_score
-  const strategyRules = await getStrategyRulesForPlan(filters.planId, filters.activityLeadType);
+  // 4. Load strategy rules for strategy_score (skip for home)
+  const strategyRules = isHome ? [] : await getStrategyRulesForPlan(filters.planId, filters.activityLeadType);
 
   // 5. Join retention, compute QLTV, match strategy rule per row
   const rows: AdLeverRow[] = perfRows.map((r) => {
     const key = `${r.state}|${r.segment}`;
-    const retVal = retentionMap.get(key) ?? retentionMap.get(r.state) ?? null;
+    const retVal = isHome ? null : (retentionMap.get(key) ?? retentionMap.get(r.state) ?? null);
     const qltv = (r.mrltv != null && r.q2b != null) ? r.mrltv * r.q2b : null;
-    const matchedRule = strategyRules.find(
+    const matchedRule = isHome ? null : (strategyRules.find(
       (rule) => rule.states.includes(r.state) && rule.segments.includes(r.segment)
-    ) ?? null;
+    ) ?? null);
     return {
       ...r,
       retention_nblr: retVal,
