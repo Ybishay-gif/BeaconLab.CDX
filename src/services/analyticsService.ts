@@ -355,27 +355,28 @@ function parseStrategyRules(raw: string, activityLeadType?: string): StrategyRul
       return [];
     }
 
-    // Build a leverScore lookup from clicks_auto scope to backfill missing values
-    // in other scopes (e.g., calls_auto, leads_auto that were saved before leverScore existed)
-    let clicksAutoLeverScores: Map<string, number> | null = null;
-    if (scopeKey !== "clicks_auto" && parsed?.scopes?.clicks_auto?.rules) {
-      clicksAutoLeverScores = new Map();
-      for (const rule of parsed.scopes.clicks_auto.rules) {
+    // leverScore is shared across all auto (or home) activity types —
+    // always use clicks_auto (or clicks_home) as the canonical source
+    const isAuto = scopeKey.endsWith("_auto");
+    const isHome = scopeKey.endsWith("_home");
+    const canonicalKey = isAuto ? "clicks_auto" : isHome ? "clicks_home" : null;
+    let canonicalLeverScores: Map<string, number> | null = null;
+    if (canonicalKey && canonicalKey !== scopeKey && parsed?.scopes?.[canonicalKey]?.rules) {
+      canonicalLeverScores = new Map();
+      for (const rule of parsed.scopes[canonicalKey].rules) {
         const name = String(rule?.name || "").trim();
         if (name && rule?.leverScore != null && Number(rule.leverScore) > 0) {
-          clicksAutoLeverScores.set(name, Number(rule.leverScore));
+          canonicalLeverScores.set(name, Number(rule.leverScore));
         }
       }
     }
 
     return scopedRules
       .map((rule: any, index: number) => {
-        let leverScore: number | null = rule?.leverScore != null && Number(rule.leverScore) > 0 ? Number(rule.leverScore) : null;
-        // Backfill from clicks_auto if missing
-        if (leverScore == null && clicksAutoLeverScores) {
-          const name = String(rule?.name || "").trim();
-          leverScore = clicksAutoLeverScores.get(name) ?? null;
-        }
+        const name = String(rule?.name || "").trim();
+        // Prefer canonical (clicks) leverScore, fall back to stored value
+        const leverScore: number | null = canonicalLeverScores?.get(name)
+          ?? (rule?.leverScore != null && Number(rule.leverScore) > 0 ? Number(rule.leverScore) : null);
         return {
           id: Number(rule?.id) || index + 1,
           name: String(rule?.name || "").trim(),
