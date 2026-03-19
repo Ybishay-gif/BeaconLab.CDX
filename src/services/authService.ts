@@ -731,17 +731,36 @@ export async function updateUserRole(userId: string, roleId: string): Promise<vo
   );
   if (rows.length === 0) fail(404, "Role not found.");
 
+  const roleName = rows[0].name;
   await query(
     `UPDATE ${table("users")} SET role = LOWER(@roleName), role_id = @roleId, updated_at = NOW() WHERE user_id = @userId`,
-    { roleName: rows[0].name, roleId, userId }
+    { roleName, roleId, userId }
   );
 
-  // Invalidate cached sessions for this user so they pick up new permissions
+  // Update active sessions to the new role so validateSessionToken resolves correct permissions
+  await query(
+    `UPDATE ${table("auth_sessions")} SET role = LOWER(@roleName), role_id = @roleId WHERE user_id = @userId AND expires_at > NOW()`,
+    { roleName, roleId, userId }
+  );
+
+  // Invalidate cached sessions for this user so they pick up new permissions immediately
   for (const [token, cached] of sessionCache.entries()) {
     if (cached.user.userId === userId) {
       sessionCache.delete(token);
     }
   }
+}
+
+/** Flush cached sessions for every user whose roleId matches. */
+export function invalidateSessionsForRole(roleId: string): number {
+  let count = 0;
+  for (const [token, cached] of sessionCache.entries()) {
+    if (cached.user.roleId === roleId) {
+      sessionCache.delete(token);
+      count++;
+    }
+  }
+  return count;
 }
 
 export async function resetManagedUserPassword(userId: string): Promise<void> {
