@@ -354,22 +354,44 @@ function parseStrategyRules(raw: string, activityLeadType?: string): StrategyRul
     if (!Array.isArray(scopedRules)) {
       return [];
     }
+
+    // Build a leverScore lookup from clicks_auto scope to backfill missing values
+    // in other scopes (e.g., calls_auto, leads_auto that were saved before leverScore existed)
+    let clicksAutoLeverScores: Map<string, number> | null = null;
+    if (scopeKey !== "clicks_auto" && parsed?.scopes?.clicks_auto?.rules) {
+      clicksAutoLeverScores = new Map();
+      for (const rule of parsed.scopes.clicks_auto.rules) {
+        const name = String(rule?.name || "").trim();
+        if (name && rule?.leverScore != null && Number(rule.leverScore) > 0) {
+          clicksAutoLeverScores.set(name, Number(rule.leverScore));
+        }
+      }
+    }
+
     return scopedRules
-      .map((rule: any, index: number) => ({
-        id: Number(rule?.id) || index + 1,
-        name: String(rule?.name || "").trim(),
-        states: Array.isArray(rule?.states)
-          ? rule.states.map((value: string) => String(value || "").trim().toUpperCase()).filter(Boolean)
-          : [],
-        segments: Array.isArray(rule?.segments)
-          ? rule.segments.map((value: string) => String(value || "").trim().toUpperCase()).filter(Boolean)
-          : [],
-        maxCpcUplift: Number(rule?.maxCpcUplift),
-        maxCpbUplift: Number(rule?.maxCpbUplift),
-        corTarget: normalizeCorTargetInput(rule?.corTarget),
-        growthStrategy: String(rule?.growthStrategy || "balanced").trim().toLowerCase(),
-        leverScore: rule?.leverScore != null && Number(rule.leverScore) > 0 ? Number(rule.leverScore) : null
-      }))
+      .map((rule: any, index: number) => {
+        let leverScore: number | null = rule?.leverScore != null && Number(rule.leverScore) > 0 ? Number(rule.leverScore) : null;
+        // Backfill from clicks_auto if missing
+        if (leverScore == null && clicksAutoLeverScores) {
+          const name = String(rule?.name || "").trim();
+          leverScore = clicksAutoLeverScores.get(name) ?? null;
+        }
+        return {
+          id: Number(rule?.id) || index + 1,
+          name: String(rule?.name || "").trim(),
+          states: Array.isArray(rule?.states)
+            ? rule.states.map((value: string) => String(value || "").trim().toUpperCase()).filter(Boolean)
+            : [],
+          segments: Array.isArray(rule?.segments)
+            ? rule.segments.map((value: string) => String(value || "").trim().toUpperCase()).filter(Boolean)
+            : [],
+          maxCpcUplift: Number(rule?.maxCpcUplift),
+          maxCpbUplift: Number(rule?.maxCpbUplift),
+          corTarget: normalizeCorTargetInput(rule?.corTarget),
+          growthStrategy: String(rule?.growthStrategy || "balanced").trim().toLowerCase(),
+          leverScore
+        };
+      })
       .filter((rule: StrategyRule) => rule.name && rule.states.length > 0 && rule.segments.length > 0);
   } catch {
     return [];
