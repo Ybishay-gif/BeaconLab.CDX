@@ -398,12 +398,7 @@ export async function syncAllFromBQ(): Promise<SyncResult> {
       `SELECT
          DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) AS event_date,
          UPPER(Data_State) AS state,
-         UPPER(
-           COALESCE(
-             NULLIF(TRIM(Segments), ''),
-             REGEXP_EXTRACT(UPPER(COALESCE(ChannelGroupName, '')), r'(MCH|MCR|SCH|SCR)')
-           )
-         ) AS segment,
+         UPPER(TRIM(Segments)) AS segment,
          REGEXP_REPLACE(LOWER(COALESCE(CAST(Account_Name AS STRING), '')), r'[^a-z0-9]+', '') AS source_key,
          COALESCE(CAST(CompanyAccountId AS STRING), '') AS company_account_id,
          CASE

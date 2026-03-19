@@ -33,12 +33,7 @@ BEGIN
   SELECT
     DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) AS event_date,
     Data_State AS state,
-    UPPER(
-      COALESCE(
-        NULLIF(TRIM(Segments), ''),
-        REGEXP_EXTRACT(UPPER(COALESCE(ChannelGroupName, '')), r'(MCH|MCR|SCH|SCR)')
-      )
-    ) AS segment,
+    UPPER(TRIM(Segments)) AS segment,
     COALESCE(
       NULLIF(TRIM(ChannelGroupName), ''),
       NULLIF(TRIM(CAST(Account_Name AS STRING)), ''),
@@ -72,11 +67,6 @@ BEGIN
   FROM `crblx-beacon-prod.Custom_Reports.Cross Tactic Analysis Full Data `
   WHERE DATE(COALESCE(createdate_utc, Data_DateCreated, DateCreated)) BETWEEN start_date AND end_date
     AND Data_State IS NOT NULL
-    AND UPPER(
-      COALESCE(
-        NULLIF(TRIM(Segments), ''),
-        REGEXP_EXTRACT(UPPER(COALESCE(ChannelGroupName, '')), r'(MCH|MCR|SCH|SCR)')
-      )
-    ) IN ('MCH', 'MCR', 'SCH', 'SCR')
+    AND UPPER(TRIM(Segments)) IN ('MCH', 'MCR', 'SCH', 'SCR')
   GROUP BY 1, 2, 3, 4, 5, 6;
 END;
