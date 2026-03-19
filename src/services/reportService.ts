@@ -391,16 +391,32 @@ async function updateStatus(
   );
 }
 
+function formatDateColumn(col: string, dataType: string): string {
+  const t = dataType.toUpperCase();
+  if (t === "DATE") return `FORMAT_DATE("%Y-%m-%d", \`${col}\`) AS \`${col}\``;
+  if (t === "DATETIME") return `FORMAT_DATETIME("%Y-%m-%d %H:%M:%S", \`${col}\`) AS \`${col}\``;
+  if (t === "TIMESTAMP") return `FORMAT_TIMESTAMP("%Y-%m-%d %H:%M:%S UTC", \`${col}\`) AS \`${col}\``;
+  if (t === "TIME") return `FORMAT_TIME("%H:%M:%S", \`${col}\`) AS \`${col}\``;
+  return `\`${col}\``;
+}
+
 function buildSelectSql(
   columns: string[],
   fixedFilters: FixedFilters,
   dynamicFilters: DynamicFilter[],
   dateStart: string,
   dateEnd: string,
-  includeOpps = false
+  includeOpps = false,
+  schemaMap?: Map<string, string>
 ): { sql: string; params: Record<string, unknown> } {
   // Columns are already validated
-  const selectCols = columns.map((c) => `\`${c}\``).join(", ");
+  const selectCols = columns.map((c) => {
+    if (schemaMap) {
+      const dataType = schemaMap.get(c);
+      if (dataType) return formatDateColumn(c, dataType);
+    }
+    return `\`${c}\``;
+  }).join(", ");
   const conditions: string[] = [];
   const params: Record<string, unknown> = {};
 
@@ -487,6 +503,10 @@ export async function generateReport(reportId: string): Promise<void> {
       await validateColumns([f.column], useOpps);
     }
 
+    // Build schema map for date formatting
+    const schemaRows = await getTableSchema(useOpps);
+    const schemaMap = new Map(schemaRows.map((c) => [c.column_name, c.data_type]));
+
     // Build the query
     const { sql, params } = buildSelectSql(
       selectedColumns,
@@ -494,7 +514,8 @@ export async function generateReport(reportId: string): Promise<void> {
       dynamicFilters,
       report.date_start,
       report.date_end,
-      useOpps
+      useOpps,
+      schemaMap
     );
 
     // Create a destination temp table in BQ
