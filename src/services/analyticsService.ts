@@ -164,7 +164,7 @@ export type StrategyRule = {
   maxCpbUplift: number;
   corTarget: number;
   growthStrategy: string;
-  leverScore: number;
+  leverScore: number | null;
 };
 
 type PriceDecisionOverride = {
@@ -368,7 +368,7 @@ function parseStrategyRules(raw: string, activityLeadType?: string): StrategyRul
         maxCpbUplift: Number(rule?.maxCpbUplift),
         corTarget: normalizeCorTargetInput(rule?.corTarget),
         growthStrategy: String(rule?.growthStrategy || "balanced").trim().toLowerCase(),
-        leverScore: Number(rule?.leverScore) || 5
+        leverScore: rule?.leverScore != null && Number(rule.leverScore) > 0 ? Number(rule.leverScore) : null
       }))
       .filter((rule: StrategyRule) => rule.name && rule.states.length > 0 && rule.segments.length > 0);
   } catch {
