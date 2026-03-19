@@ -27,6 +27,9 @@ export const ALL_PERMISSIONS = [
   "ad_group_levers:view",
   "ad_group_levers:edit",
 
+  // General
+  "ai_chat:view",
+
   // Settings
   "report_generator:edit",
   "default_targets:edit",
@@ -62,6 +65,8 @@ export const PERMISSION_GROUPS: Record<string, { label: string; permissions: str
       "price_exploration_plan:edit",
       "plan_outcome:view",
       "plan_outcome:edit",
+      "ad_group_levers:view",
+      "ad_group_levers:edit",
     ],
   },
   analytics: {
@@ -81,6 +86,12 @@ export const PERMISSION_GROUPS: Record<string, { label: string; permissions: str
       "channel_recommendations:edit",
       "ad_group_levers:view",
       "ad_group_levers:edit",
+    ],
+  },
+  general: {
+    label: "General",
+    permissions: [
+      "ai_chat:view",
     ],
   },
   settings: {
@@ -128,6 +139,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "channel_recommendations:edit",
     "ad_group_levers:view",
     "ad_group_levers:edit",
+    // General
+    "ai_chat:view",
     // Settings — limited
     "report_generator:edit",
     "default_targets:edit",
@@ -148,6 +161,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "state_analytics:view",
     "channel_recommendations:view",
     "ad_group_levers:view",
+    "ai_chat:view",
     "tickets:view",
     "audit_log:view",
   ],
