@@ -175,11 +175,11 @@ export async function getUserLoginState(email) {
     await ensureAuthTablesExist();
     const user = await getUserByEmail(email);
     if (!user || !user.is_active) {
-        return { exists: false, requiresPasswordSetup: false };
+        return { exists: false, hasPassword: false };
     }
     const credential = await getCredentialsByUserId(user.user_id);
-    const requiresPasswordSetup = !credential?.password_hash || !credential?.password_salt;
-    return { exists: true, requiresPasswordSetup };
+    const hasPassword = !!(credential?.password_hash && credential?.password_salt);
+    return { exists: true, hasPassword };
 }
 export async function setupUserPassword(email, password) {
     await ensureAuthTablesExist();
@@ -349,6 +349,46 @@ export async function logoutSession(token) {
       DELETE FROM ${table("auth_sessions")}
       WHERE session_token = @token
     `, { token });
+}
+/**
+ * Delete all sessions for a user and clear them from the in-memory cache.
+ * Called when a user is deactivated to ensure immediate logout.
+ */
+export async function invalidateUserSessions(userId) {
+    await ensureAuthTablesExist();
+    // Fetch tokens first so we can purge the in-memory cache
+    const tokens = await query(`SELECT session_token FROM ${table("auth_sessions")} WHERE user_id = @userId`, { userId });
+    for (const t of tokens)
+        sessionCache.delete(t.session_token);
+    // Delete from DB
+    await query(`DELETE FROM ${table("auth_sessions")} WHERE user_id = @userId`, { userId });
+    return tokens.length;
+}
+/**
+ * Set a user's is_active flag. When deactivating, also invalidates all sessions.
+ */
+export async function setUserActive(userId, active) {
+    const rows = await query(`SELECT user_id, role FROM ${table("users")} WHERE user_id = @userId`, { userId });
+    if (rows.length === 0) {
+        const error = new Error("User not found.");
+        error.status = 404;
+        throw error;
+    }
+    // Prevent deactivating the last active admin
+    if (!active && rows[0].role === "admin") {
+        const admins = await query(`SELECT COUNT(*)::text AS cnt FROM ${table("users")} WHERE role = 'admin' AND is_active = TRUE AND user_id != @userId`, { userId });
+        if (parseInt(admins[0]?.cnt ?? "0", 10) === 0) {
+            const error = new Error("Cannot deactivate the last active admin.");
+            error.status = 400;
+            throw error;
+        }
+    }
+    await query(`UPDATE ${table("users")} SET is_active = @active, updated_at = NOW() WHERE user_id = @userId`, { userId, active });
+    // If deactivating, kill all sessions immediately
+    if (!active) {
+        const killed = await invalidateUserSessions(userId);
+        console.log(`Deactivated user ${userId}, invalidated ${killed} session(s)`);
+    }
 }
 // ── Module access ────────────────────────────────────────────────
 export async function getUserModules(userId) {

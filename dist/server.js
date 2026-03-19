@@ -440,6 +440,18 @@ async function runMigrations() {
 }
 async function main() {
     await runMigrations();
+    // Ensure system role permissions stay in sync with DEFAULT_ROLE_PERMISSIONS
+    if (config.usePg) {
+        try {
+            const { syncDefaultRolePermissions } = await import("./services/roleService.js");
+            const added = await syncDefaultRolePermissions();
+            if (added > 0)
+                console.log(`Synced ${added} missing role permission(s)`);
+        }
+        catch (err) {
+            console.warn("Role permission sync warning (non-fatal):", err);
+        }
+    }
     app.listen(config.port, () => {
         console.log(`planning-app-api listening on port ${config.port}`);
     });

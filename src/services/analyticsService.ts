@@ -1,6 +1,6 @@
 import { query, table } from "../db/index.js";
 import { config } from "../config.js";
-import { normalizeActivityScopeKey, splitCombinedFilter } from "./shared/activityScope.js";
+import { normalizeActivityScopeKey, splitCombinedFilter, resolveQbc } from "./shared/activityScope.js";
 import { buildCombinedRatioSql, buildRoeSql } from "./shared/kpiSql.js";
 import { cached, buildCacheKey } from "../cache.js";
 
@@ -2904,7 +2904,7 @@ export async function getPlansComparison(opts: {
           const activity = String(ctx.activity || "clicks");
           const leadType = String(ctx.leadType || "auto");
           const activityLeadType = ctx.activityLeadType ? String(ctx.activityLeadType) : `${activity}_${leadType}`;
-          const qbc = Number(ctx.qbcClicks) || 0;
+          const qbc = resolveQbc(activityLeadType, Number(ctx.qbcClicks) || 0, Number(ctx.qbcLeadsCalls) || 0);
 
           if (!startDate || !endDate || !qbc) {
             return { label: plan.plan_name, plan_id: plan.plan_id, empty: true } as PlansComparisonRow & { empty?: boolean };
@@ -2954,11 +2954,13 @@ export async function getPlansComparison(opts: {
 
   const startDate = opts.startDate || String(ctx.perfStartDate || ctx.performanceStartDate || "");
   const endDate = opts.endDate || String(ctx.perfEndDate || ctx.performanceEndDate || "");
-  const qbc = Number(ctx.qbcClicks) || 0;
-  if (!startDate || !endDate || !qbc) return [];
+  const qbcClicks = Number(ctx.qbcClicks) || 0;
+  const qbcLeadsCalls = Number(ctx.qbcLeadsCalls) || 0;
+  if (!startDate || !endDate || (!qbcClicks && !qbcLeadsCalls)) return [];
 
   const results = await Promise.all(
     ACTIVITY_LEAD_TYPES.map(async (alt) => {
+      const qbc = resolveQbc(alt, qbcClicks, qbcLeadsCalls);
       try {
         const sa = await getStateAnalysis({ planId, startDate, endDate, activityLeadType: alt, qbc });
         return {

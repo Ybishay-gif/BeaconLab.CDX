@@ -511,12 +511,15 @@ async function handleGetAdLeverData(
   const endDate = (args.end_date as string) || planContext.perfEndDate;
 
   try {
+    const qbc = planContext.activityLeadType?.startsWith("clicks")
+      ? (planContext.qbcClicks ?? 0)
+      : (planContext.qbcLeadsCalls ?? 0);
     const rows = await getAdLeverData({
       planId: planContext.planId,
       startDate,
       endDate,
       activityLeadType: planContext.activityLeadType,
-      qbc: 0,
+      qbc,
     });
 
     // Filter and slim rows for AI

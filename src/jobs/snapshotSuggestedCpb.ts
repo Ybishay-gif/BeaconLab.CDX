@@ -13,6 +13,7 @@ import { bigquery, table as bqTable } from "../db/bigquery.js";
 import { config } from "../config.js";
 import { listPlans } from "../services/plansService.js";
 import { listTargets, type TargetRow } from "../services/targetsService.js";
+import { resolveQbc } from "../services/shared/activityScope.js";
 
 const BQ_TABLE = `${config.projectId}.${config.dataset}.suggested_target_cpb`;
 const BATCH_SIZE = 500;
@@ -130,12 +131,12 @@ export async function snapshotSuggestedCpb(): Promise<SnapshotResult> {
 
       const perfStartDate = String(ctx.perfStartDate || ctx.performanceStartDate || "");
       const perfEndDate = String(ctx.perfEndDate || ctx.performanceEndDate || "");
-      const qbc = Number(ctx.qbcClicks) || 0;
       const activity = String(ctx.activity || "clicks");
       const leadType = String(ctx.leadType || "auto");
       const activityLeadType = ctx.activityLeadType
         ? String(ctx.activityLeadType)
         : `${activity}_${leadType}`;
+      const qbc = resolveQbc(activityLeadType, Number(ctx.qbcClicks) || 0, Number(ctx.qbcLeadsCalls) || 0);
 
       if (!perfStartDate || !perfEndDate) continue;
 

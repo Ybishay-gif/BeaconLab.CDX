@@ -22,6 +22,18 @@ export function normalizeActivityScopeKey(value?: string): string {
   return ACTIVITY_SCOPE_KEYS.has(normalized) ? normalized : "all";
 }
 
+/**
+ * Returns the correct QBC value based on activity/lead type.
+ * clicks → qbcClicks, calls/leads → qbcLeadsCalls.
+ */
+export function resolveQbc(
+  activityLeadType: string | undefined,
+  qbcClicks: number,
+  qbcLeadsCalls: number,
+): number {
+  return (activityLeadType || "").startsWith("clicks") ? qbcClicks : qbcLeadsCalls;
+}
+
 export function splitCombinedFilter(value?: string): CombinedFilterParts {
   switch ((value || "").toLowerCase()) {
     case "clicks_auto":
