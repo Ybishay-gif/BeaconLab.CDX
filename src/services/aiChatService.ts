@@ -325,7 +325,12 @@ export async function handleAiChat(
     const retryPrompt = `The SQL query failed with this error:\n\`\`\`\n${dbError}\n\`\`\`\n\nOriginal query:\n\`\`\`sql\n${sql}\n\`\`\`\n\nPlease either fix the query (respond with a new \`\`\`sql block) or explain what went wrong to the user.`;
 
     const retryResponse = await withRetry(() => chat.sendMessage(retryPrompt));
-    const retryText = retryResponse.response.text();
+    let retryText: string;
+    try {
+      retryText = retryResponse.response.text();
+    } catch {
+      retryText = "I tried to fix the query but wasn't able to generate a response. Could you rephrase your question?";
+    }
     const retrySql = extractSqlBlock(retryText);
 
     if (retrySql && validateSql(retrySql)) {
@@ -424,7 +429,12 @@ async function handleFunctionCall(
     }
 
     // No more function calls — Gemini produced a text response
-    const answer = functionResponse.response.text();
+    let answer: string;
+    try {
+      answer = functionResponse.response.text();
+    } catch {
+      answer = "I completed the action but wasn't able to generate a summary. Could you try asking again?";
+    }
     session.history.push({ role: "model", parts: [{ text: answer }] });
     trimHistory(session);
 
