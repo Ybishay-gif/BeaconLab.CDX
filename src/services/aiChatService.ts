@@ -286,7 +286,10 @@ export async function handleAiChat(
   try {
     pass1Text = pass1Response.text();
   } catch {
-    // Response has no text (e.g. blocked by safety filters)
+    pass1Text = "";
+  }
+  if (!pass1Text?.trim()) {
+    // Response has no text (e.g. blocked by safety filters, empty Gemini response)
     const fallback = "I wasn't able to generate a response. Could you rephrase your question?";
     session.history.push({ role: "model", parts: [{ text: fallback }] });
     trimHistory(session);
@@ -329,6 +332,9 @@ export async function handleAiChat(
     try {
       retryText = retryResponse.response.text();
     } catch {
+      retryText = "";
+    }
+    if (!retryText?.trim()) {
       retryText = "I tried to fix the query but wasn't able to generate a response. Could you rephrase your question?";
     }
     const retrySql = extractSqlBlock(retryText);
@@ -433,6 +439,9 @@ async function handleFunctionCall(
     try {
       answer = functionResponse.response.text();
     } catch {
+      answer = "";
+    }
+    if (!answer?.trim()) {
       answer = "I completed the action but wasn't able to generate a summary. Could you try asking again?";
     }
     session.history.push({ role: "model", parts: [{ text: answer }] });
