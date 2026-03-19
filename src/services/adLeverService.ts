@@ -176,7 +176,10 @@ export async function getAdLeverData(filters: AdLeverFilters): Promise<AdLeverRo
   const overrides = await loadOverrides(filters.planId);
 
   // 4. Load strategy rules for strategy_score (skip for home)
-  const strategyRules = isHome ? [] : await getStrategyRulesForPlan(filters.planId, filters.activityLeadType);
+  // Strategy rules (leverScore) are shared across all auto activity types —
+  // always load from clicks_auto as the canonical source for leverScore.
+  const leverScopeKey = scope.leadType === "auto" ? "clicks_auto" : filters.activityLeadType;
+  const strategyRules = isHome ? [] : await getStrategyRulesForPlan(filters.planId, leverScopeKey);
 
   // 5. Join retention, compute QLTV, match strategy rule per row
   const rows: AdLeverRow[] = perfRows.map((r) => {
