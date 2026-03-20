@@ -1729,7 +1729,7 @@ export async function getPriceExploration(
     for (const row of groupRows) {
       row.recommended_testing_point = recommendedTp;
       row.algorithm_recommended_tp = algorithmTp;
-      row.is_override = hasValidOverride;
+      row.is_override = hasValidOverride && Number(overrideTp) !== algorithmTp;
     }
   }
 
