@@ -62,7 +62,7 @@ async function testPasswordPolicy() {
   ];
 
   for (const { pw, reason } of weakPasswords) {
-    const res = await fetchJSON("/auth/user-setup-password", {
+    const res = await fetchJSON("/api/auth/user-setup-password", {
       method: "POST",
       body: JSON.stringify({ email: "security-test@nonexistent.com", password: pw, adminCode: ADMIN_CODE }),
     });
@@ -74,7 +74,7 @@ async function testPasswordPolicy() {
       passed: res.status !== 200,
       severity: "high",
       details: res.status === 200 ? `Weak password "${pw}" was accepted` : `Correctly rejected (${res.status})`,
-      evidence: `POST /auth/user-setup-password with password="${pw}" → ${res.status}`,
+      evidence: `POST /api/auth/user-setup-password with password="${pw}" → ${res.status}`,
     });
   }
 }
@@ -86,7 +86,7 @@ async function testSessionSecurity() {
   console.log("\n--- 2. Session Security ---");
 
   // Login to get a valid session
-  const loginRes = await fetchJSON("/auth/admin-login", {
+  const loginRes = await fetchJSON("/api/auth/admin-login", {
     method: "POST",
     body: JSON.stringify({ accessCode: ADMIN_CODE }),
   });
@@ -124,7 +124,7 @@ async function testSessionSecurity() {
 
   // Verify logout actually invalidates the token
   // Create a new session just for this test
-  const logoutTestLogin = await fetchJSON("/auth/admin-login", {
+  const logoutTestLogin = await fetchJSON("/api/auth/admin-login", {
     method: "POST",
     body: JSON.stringify({ accessCode: ADMIN_CODE }),
   });
@@ -137,7 +137,7 @@ async function testSessionSecurity() {
     });
 
     // Logout
-    await fetchJSON("/auth/logout", {
+    await fetchJSON("/api/auth/logout", {
       method: "POST",
       headers: { "x-session-token": logoutToken },
     });
@@ -160,7 +160,7 @@ async function testSessionSecurity() {
   }
 
   // Clean up: logout the main session
-  await fetchJSON("/auth/logout", { method: "POST", headers: { "x-session-token": token } });
+  await fetchJSON("/api/auth/logout", { method: "POST", headers: { "x-session-token": token } });
 }
 
 // ============================================================
@@ -218,7 +218,7 @@ async function testAuthBypass() {
 
   // Admin endpoint without admin role
   // Login as admin first to get a valid session, then test admin-only endpoints
-  const loginRes = await fetchJSON("/auth/admin-login", {
+  const loginRes = await fetchJSON("/api/auth/admin-login", {
     method: "POST",
     body: JSON.stringify({ accessCode: ADMIN_CODE }),
   });
@@ -248,7 +248,7 @@ async function testAuthBypass() {
     });
 
     // Cleanup
-    await fetchJSON("/auth/logout", { method: "POST", headers: { "x-session-token": loginRes.body.token } });
+    await fetchJSON("/api/auth/logout", { method: "POST", headers: { "x-session-token": loginRes.body.token } });
   }
 }
 
@@ -270,12 +270,12 @@ async function testRateLimiting() {
     return;
   }
 
-  // Send 11 requests to admin-login (limit is 10 per 15 min)
+  // Send 32 requests to admin-login (limit is 30 per 15 min)
   let lastStatus = 0;
   let rateLimitHit = false;
 
-  for (let i = 0; i < 12; i++) {
-    const res = await fetchJSON("/auth/admin-login", {
+  for (let i = 0; i < 32; i++) {
+    const res = await fetchJSON("/api/auth/admin-login", {
       method: "POST",
       body: JSON.stringify({ accessCode: "wrong-code-for-rate-limit-test" }),
     });
@@ -287,16 +287,16 @@ async function testRateLimiting() {
   }
 
   record({
-    name: "Auth endpoints rate-limited (10/15min)",
+    name: "Auth endpoints rate-limited (30/15min)",
     category: "Rate Limiting",
     passed: rateLimitHit,
     severity: "high",
-    details: rateLimitHit ? "Rate limit triggered correctly" : `Sent 12 requests without hitting 429 (last status: ${lastStatus})`,
+    details: rateLimitHit ? "Rate limit triggered correctly" : `Sent 32 requests without hitting 429 (last status: ${lastStatus})`,
     remediation: "Ensure express-rate-limit is configured on all auth routes",
   });
 
   // Check rate limit headers on a normal auth request
-  const headerCheck = await fetch(`${BASE_URL}/auth/admin-login`, {
+  const headerCheck = await fetch(`${BASE_URL}/api/auth/admin-login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ accessCode: "wrong" }),
@@ -322,7 +322,7 @@ async function testDataProtection() {
   console.log("\n--- 5. Data Protection ---");
 
   // Login to check API responses
-  const loginRes = await fetchJSON("/auth/admin-login", {
+  const loginRes = await fetchJSON("/api/auth/admin-login", {
     method: "POST",
     body: JSON.stringify({ accessCode: ADMIN_CODE }),
   });
@@ -374,7 +374,7 @@ async function testDataProtection() {
   });
 
   // Cleanup
-  await fetchJSON("/auth/logout", { method: "POST", headers: { "x-session-token": token } });
+  await fetchJSON("/api/auth/logout", { method: "POST", headers: { "x-session-token": token } });
 }
 
 // ============================================================
