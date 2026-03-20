@@ -11,6 +11,13 @@ export function normalizeActivityScopeKey(value) {
     const normalized = String(value || "all").trim().toLowerCase();
     return ACTIVITY_SCOPE_KEYS.has(normalized) ? normalized : "all";
 }
+/**
+ * Returns the correct QBC value based on activity/lead type.
+ * clicks → qbcClicks, calls/leads → qbcLeadsCalls.
+ */
+export function resolveQbc(activityLeadType, qbcClicks, qbcLeadsCalls) {
+    return (activityLeadType || "").startsWith("clicks") ? qbcClicks : qbcLeadsCalls;
+}
 export function splitCombinedFilter(value) {
     switch ((value || "").toLowerCase()) {
         case "clicks_auto":

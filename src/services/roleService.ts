@@ -141,29 +141,8 @@ export async function updateRole(
   return role;
 }
 
-/**
- * Sync DEFAULT_ROLE_PERMISSIONS into the role_permissions table.
- * Idempotent — uses ON CONFLICT DO NOTHING so safe to call on every startup.
- */
-export async function syncDefaultRolePermissions(): Promise<number> {
-  let added = 0;
-  for (const [roleName, perms] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
-    const role = await getRoleByName(roleName);
-    if (!role) continue;
-
-    for (const perm of perms) {
-      const rows = await query<{ cnt: string }>(
-        `INSERT INTO ${table("role_permissions")} (role_id, permission_key)
-         VALUES (@roleId, @perm)
-         ON CONFLICT DO NOTHING
-         RETURNING permission_key`,
-        { roleId: role.role_id, perm }
-      );
-      if (rows.length > 0) added++;
-    }
-  }
-  return added;
-}
+// syncDefaultRolePermissions removed — it re-added permissions that admins
+// intentionally removed. Role permissions are now managed exclusively via the admin UI.
 
 export async function deleteRole(roleId: string): Promise<void> {
   const role = await getRoleById(roleId);

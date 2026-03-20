@@ -38,6 +38,7 @@ app.use(cors({
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "x-session-token"],
+    exposedHeaders: ["x-user-role"],
 }));
 app.use(express.json({ limit: "15mb" }));
 app.use(express.static(path.resolve(__dirname, "../public")));
@@ -344,22 +345,25 @@ async function runMigrations() {
         // Add role_id FK to users and auth_sessions
         await pgExec("ALTER TABLE users ADD COLUMN IF NOT EXISTS role_id TEXT REFERENCES roles(role_id)");
         await pgExec("ALTER TABLE auth_sessions ADD COLUMN IF NOT EXISTS role_id TEXT");
-        // Seed system roles (idempotent) — uses query() from db layer for SELECT/INSERT RETURNING
+        // Seed system roles — only insert defaults for NEW roles, never overwrite existing permissions
         const { query: dbQuery } = await import("./db/index.js");
         for (const [roleName, permissions] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
             const rows = await dbQuery(`SELECT role_id FROM roles WHERE name = @roleName`, { roleName });
             let roleId;
+            let isNewRole = false;
             if (rows.length === 0) {
                 const inserted = await dbQuery(`INSERT INTO roles (name, is_system) VALUES (@roleName, TRUE) RETURNING role_id`, { roleName });
                 roleId = inserted[0].role_id;
+                isNewRole = true;
             }
             else {
                 roleId = rows[0].role_id;
             }
-            // Sync permissions for this role
-            await dbQuery(`DELETE FROM role_permissions WHERE role_id = @roleId`, { roleId });
-            for (const perm of permissions) {
-                await dbQuery(`INSERT INTO role_permissions (role_id, permission_key) VALUES (@roleId, @perm) ON CONFLICT DO NOTHING`, { roleId, perm });
+            // Only seed permissions for newly created roles — preserve manual edits for existing roles
+            if (isNewRole) {
+                for (const perm of permissions) {
+                    await dbQuery(`INSERT INTO role_permissions (role_id, permission_key) VALUES (@roleId, @perm) ON CONFLICT DO NOTHING`, { roleId, perm });
+                }
             }
         }
         // Backfill: assign role_id to existing users based on role text column

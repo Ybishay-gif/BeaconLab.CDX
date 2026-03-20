@@ -5,6 +5,7 @@ import { listPlans } from "../../services/plansService.js";
 import { startSyncInBackground, getSyncStatus } from "../../jobs/syncFromBQ.js";
 import { snapshotSuggestedCpb } from "../../jobs/snapshotSuggestedCpb.js";
 import { parseOptionalNumber, parseQueryArray } from "./queryParsers.js";
+import { resolveQbc } from "../../services/shared/activityScope.js";
 import { cacheClear, cacheStats } from "../../cache.js";
 import { requireUser } from "../../middleware/auth.js";
 import { config } from "../../config.js";
@@ -65,13 +66,13 @@ adminRoutes.post("/admin/warm-cache", requireAdminOrScheduler, async (_req, res)
                 // Support both new and legacy field names
                 const perfStartDate = String(ctx.perfStartDate || ctx.performanceStartDate || "");
                 const perfEndDate = String(ctx.perfEndDate || ctx.performanceEndDate || "");
-                const qbc = Number(ctx.qbcClicks) || 0;
                 // Derive activityLeadType from stored activity + leadType, or use direct value if present
                 const activity = String(ctx.activity || "clicks");
                 const leadType = String(ctx.leadType || "auto");
                 const activityLeadType = ctx.activityLeadType
                     ? String(ctx.activityLeadType)
                     : `${activity}_${leadType}`;
+                const qbc = resolveQbc(activityLeadType, Number(ctx.qbcClicks) || 0, Number(ctx.qbcLeadsCalls) || 0);
                 if (!perfStartDate || !perfEndDate || !qbc) {
                     results.push({ planId: plan.plan_id, planName: plan.plan_name, ok: false, ms: 0 });
                     continue;

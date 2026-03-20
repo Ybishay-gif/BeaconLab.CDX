@@ -1,6 +1,6 @@
 import { query, table } from "../db/index.js";
 import { config } from "../config.js";
-import { normalizeActivityScopeKey, splitCombinedFilter } from "./shared/activityScope.js";
+import { normalizeActivityScopeKey, splitCombinedFilter, resolveQbc } from "./shared/activityScope.js";
 import { buildCombinedRatioSql, buildRoeSql } from "./shared/kpiSql.js";
 import { cached, buildCacheKey } from "../cache.js";
 const RAW_CROSS_TACTIC_TABLE = config.rawCrossTacticTable;
@@ -36,22 +36,43 @@ function parseStrategyRules(raw, activityLeadType) {
         if (!Array.isArray(scopedRules)) {
             return [];
         }
+        // leverScore is shared across all auto (or home) activity types —
+        // always use clicks_auto (or clicks_home) as the canonical source
+        const isAuto = scopeKey.endsWith("_auto");
+        const isHome = scopeKey.endsWith("_home");
+        const canonicalKey = isAuto ? "clicks_auto" : isHome ? "clicks_home" : null;
+        let canonicalLeverScores = null;
+        if (canonicalKey && canonicalKey !== scopeKey && parsed?.scopes?.[canonicalKey]?.rules) {
+            canonicalLeverScores = new Map();
+            for (const rule of parsed.scopes[canonicalKey].rules) {
+                const name = String(rule?.name || "").trim();
+                if (name && rule?.leverScore != null && Number(rule.leverScore) > 0) {
+                    canonicalLeverScores.set(name, Number(rule.leverScore));
+                }
+            }
+        }
         return scopedRules
-            .map((rule, index) => ({
-            id: Number(rule?.id) || index + 1,
-            name: String(rule?.name || "").trim(),
-            states: Array.isArray(rule?.states)
-                ? rule.states.map((value) => String(value || "").trim().toUpperCase()).filter(Boolean)
-                : [],
-            segments: Array.isArray(rule?.segments)
-                ? rule.segments.map((value) => String(value || "").trim().toUpperCase()).filter(Boolean)
-                : [],
-            maxCpcUplift: Number(rule?.maxCpcUplift),
-            maxCpbUplift: Number(rule?.maxCpbUplift),
-            corTarget: normalizeCorTargetInput(rule?.corTarget),
-            growthStrategy: String(rule?.growthStrategy || "balanced").trim().toLowerCase(),
-            leverScore: Number(rule?.leverScore) || 5
-        }))
+            .map((rule, index) => {
+            const name = String(rule?.name || "").trim();
+            // Prefer canonical (clicks) leverScore, fall back to stored value
+            const leverScore = canonicalLeverScores?.get(name)
+                ?? (rule?.leverScore != null && Number(rule.leverScore) > 0 ? Number(rule.leverScore) : null);
+            return {
+                id: Number(rule?.id) || index + 1,
+                name: String(rule?.name || "").trim(),
+                states: Array.isArray(rule?.states)
+                    ? rule.states.map((value) => String(value || "").trim().toUpperCase()).filter(Boolean)
+                    : [],
+                segments: Array.isArray(rule?.segments)
+                    ? rule.segments.map((value) => String(value || "").trim().toUpperCase()).filter(Boolean)
+                    : [],
+                maxCpcUplift: Number(rule?.maxCpcUplift),
+                maxCpbUplift: Number(rule?.maxCpbUplift),
+                corTarget: normalizeCorTargetInput(rule?.corTarget),
+                growthStrategy: String(rule?.growthStrategy || "balanced").trim().toLowerCase(),
+                leverScore
+            };
+        })
             .filter((rule) => rule.name && rule.states.length > 0 && rule.segments.length > 0);
     }
     catch {
@@ -2238,7 +2259,7 @@ export async function getPlansComparison(opts) {
             const activity = String(ctx.activity || "clicks");
             const leadType = String(ctx.leadType || "auto");
             const activityLeadType = ctx.activityLeadType ? String(ctx.activityLeadType) : `${activity}_${leadType}`;
-            const qbc = Number(ctx.qbcClicks) || 0;
+            const qbc = resolveQbc(activityLeadType, Number(ctx.qbcClicks) || 0, Number(ctx.qbcLeadsCalls) || 0);
             if (!startDate || !endDate || !qbc) {
                 return { label: plan.plan_name, plan_id: plan.plan_id, empty: true };
             }
@@ -2287,10 +2308,12 @@ export async function getPlansComparison(opts) {
     catch { /* ignore */ }
     const startDate = opts.startDate || String(ctx.perfStartDate || ctx.performanceStartDate || "");
     const endDate = opts.endDate || String(ctx.perfEndDate || ctx.performanceEndDate || "");
-    const qbc = Number(ctx.qbcClicks) || 0;
-    if (!startDate || !endDate || !qbc)
+    const qbcClicks = Number(ctx.qbcClicks) || 0;
+    const qbcLeadsCalls = Number(ctx.qbcLeadsCalls) || 0;
+    if (!startDate || !endDate || (!qbcClicks && !qbcLeadsCalls))
         return [];
     const results = await Promise.all(ACTIVITY_LEAD_TYPES.map(async (alt) => {
+        const qbc = resolveQbc(alt, qbcClicks, qbcLeadsCalls);
         try {
             const sa = await getStateAnalysis({ planId, startDate, endDate, activityLeadType: alt, qbc });
             return {

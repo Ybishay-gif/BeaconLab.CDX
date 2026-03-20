@@ -19,6 +19,12 @@ export async function requireUser(req, res, next) {
             roleName: user.roleName,
             permissions: user.permissions,
         };
+        // Send current role + permissions so the frontend can detect changes without re-login
+        res.setHeader("x-user-role", JSON.stringify({
+            roleId: user.roleId,
+            roleName: user.roleName,
+            permissions: user.permissions,
+        }));
         next();
     }
     catch (error) {

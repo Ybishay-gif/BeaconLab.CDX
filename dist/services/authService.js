@@ -538,13 +538,27 @@ export async function updateUserRole(userId, roleId) {
     const rows = await query(`SELECT name FROM ${table("roles")} WHERE role_id = @roleId`, { roleId });
     if (rows.length === 0)
         fail(404, "Role not found.");
-    await query(`UPDATE ${table("users")} SET role = LOWER(@roleName), role_id = @roleId, updated_at = NOW() WHERE user_id = @userId`, { roleName: rows[0].name, roleId, userId });
-    // Invalidate cached sessions for this user so they pick up new permissions
+    const roleName = rows[0].name;
+    await query(`UPDATE ${table("users")} SET role = LOWER(@roleName), role_id = @roleId, updated_at = NOW() WHERE user_id = @userId`, { roleName, roleId, userId });
+    // Update active sessions to the new role so validateSessionToken resolves correct permissions
+    await query(`UPDATE ${table("auth_sessions")} SET role = LOWER(@roleName), role_id = @roleId WHERE user_id = @userId AND expires_at > NOW()`, { roleName, roleId, userId });
+    // Invalidate cached sessions for this user so they pick up new permissions immediately
     for (const [token, cached] of sessionCache.entries()) {
         if (cached.user.userId === userId) {
             sessionCache.delete(token);
         }
     }
+}
+/** Flush cached sessions for every user whose roleId matches. */
+export function invalidateSessionsForRole(roleId) {
+    let count = 0;
+    for (const [token, cached] of sessionCache.entries()) {
+        if (cached.user.roleId === roleId) {
+            sessionCache.delete(token);
+            count++;
+        }
+    }
+    return count;
 }
 export async function resetManagedUserPassword(userId) {
     await ensureAuthTablesExist();
