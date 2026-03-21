@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requirePermission } from "../../middleware/auth.js";
 import { addManagedUser, listManagedUsers, resetManagedUserPassword, setUserModules, updateUserRole, setUserActive, getUserModules } from "../../services/authService.js";
-import { VALID_MODULE_IDS } from "../../modules.js";
+import { VALID_MODULE_IDS, getAllModules } from "../../modules.js";
 import { appendChangeLog } from "../../services/changeLogService.js";
 import { query, table } from "../../db/index.js";
 const addUserSchema = z.object({
@@ -142,7 +142,22 @@ usersRoutes.put("/users/:userId/active", requirePermission("user_management:edit
         next(error);
     }
 });
-// Return available modules for admin UI
-usersRoutes.get("/modules", requirePermission("user_management:view"), (_req, res) => {
-    res.json({ modules: VALID_MODULE_IDS });
+// Return available modules for admin UI (includes dynamic modules)
+usersRoutes.get("/modules", requirePermission("user_management:view"), async (_req, res, next) => {
+    try {
+        const allModules = await getAllModules();
+        res.json({
+            modules: VALID_MODULE_IDS,
+            allModules: allModules.map((m) => ({
+                id: m.id,
+                label: m.label,
+                defaultRoute: m.defaultRoute,
+                isDynamic: m.isDynamic ?? false,
+                isActive: m.isActive ?? true,
+            })),
+        });
+    }
+    catch (error) {
+        next(error);
+    }
 });

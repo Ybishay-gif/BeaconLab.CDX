@@ -853,7 +853,11 @@ Follow these steps. Be conversational and helpful:
    - Beacon ID, Sha256 Email, Sha256 Phone, Jornaya Lead Id, RC1 QuoteID, AP Form ID
    - Map to tool values: beacon_id, sha256_email, sha256_phone, jornaya_id, rc1_quote_id, ap_form_id
 
-2. **Search**: Call **search_lead** with the identifier type and value.
+2. **CRITICAL — When the user provides the value: IMMEDIATELY call search_lead.**
+   - If the user already told you the identifier type (e.g. "Beacon ID") and then sends a value like a UUID, hash, email, phone number, or any string — that IS the identifier value. Do NOT ask again. Call **search_lead** right away.
+   - Example: User says "Beacon ID" → you ask for the value → user sends "bf30a62a-0ed1-40b3-81fd-41be041ca5ca" → IMMEDIATELY call search_lead with identifier_type="beacon_id" and identifier_value="bf30a62a-0ed1-40b3-81fd-41be041ca5ca"
+   - Example: User says "Sha256 Phone" → you ask for the value → user sends "a1b2c3d4..." → IMMEDIATELY call search_lead with identifier_type="sha256_phone"
+   - NEVER ask the user to provide the ID again if they just sent it. Any string the user sends after choosing an identifier type IS the value.
 
 3. **Multiple results**: If multiple rows returned:
    - Show a summary: count, Partner Names, Segments, date range, States

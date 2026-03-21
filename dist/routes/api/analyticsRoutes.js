@@ -9,6 +9,7 @@ import { resolveQbc } from "../../services/shared/activityScope.js";
 import { cacheClear, cacheStats } from "../../cache.js";
 import { requireUser } from "../../middleware/auth.js";
 import { config } from "../../config.js";
+import { getCrossTacticSchema, getCrossTacticAggregation, getFilterValues as getCrossTacticFilterValues, } from "../../services/crossTacticService.js";
 export const analyticsRoutes = Router();
 // ── Admin endpoints — require auth OR internal scheduler secret ─────────────
 export const adminRoutes = Router();
@@ -300,6 +301,67 @@ analyticsRoutes.get("/analytics/state-analysis", async (req, res, next) => {
         res.json(payload);
     }
     catch (error) {
+        next(error);
+    }
+});
+// ── Cross Tactic Analytics Explorer ─────────────────────────────────
+analyticsRoutes.get("/analytics/cross-tactic/schema", async (_req, res, next) => {
+    try {
+        const schema = await getCrossTacticSchema();
+        res.json(schema);
+    }
+    catch (error) {
+        next(error);
+    }
+});
+analyticsRoutes.get("/analytics/cross-tactic/filter-values", async (req, res, next) => {
+    try {
+        const column = typeof req.query.column === "string" ? req.query.column : "";
+        if (!column) {
+            res.status(400).json({ error: "column query param is required" });
+            return;
+        }
+        const values = await getCrossTacticFilterValues(column);
+        res.json({ values });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+analyticsRoutes.post("/analytics/cross-tactic", async (req, res, next) => {
+    try {
+        const body = req.body;
+        const dimensions = Array.isArray(body.dimensions) ? body.dimensions : [];
+        const metrics = Array.isArray(body.metrics) ? body.metrics : ["opps", "bids", "sold", "total_cost"];
+        const filters = typeof body.filters === "object" && body.filters ? body.filters : {};
+        const startDate = typeof body.startDate === "string" ? body.startDate : "";
+        const endDate = typeof body.endDate === "string" ? body.endDate : "";
+        const drillPath = Array.isArray(body.drillPath) ? body.drillPath : [];
+        const qbc = typeof body.qbc === "number" ? body.qbc : 0;
+        if (!dimensions.length) {
+            res.status(400).json({ error: "dimensions array is required (1-10 items)" });
+            return;
+        }
+        if (!startDate || !endDate) {
+            res.status(400).json({ error: "startDate and endDate are required" });
+            return;
+        }
+        const result = await getCrossTacticAggregation({
+            dimensions,
+            metrics,
+            filters,
+            startDate,
+            endDate,
+            drillPath,
+            qbc,
+        });
+        res.json(result);
+    }
+    catch (error) {
+        if (error instanceof Error && error.message.startsWith("Invalid")) {
+            res.status(400).json({ error: error.message });
+            return;
+        }
         next(error);
     }
 });
