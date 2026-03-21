@@ -879,6 +879,7 @@ Follow these steps. Be conversational and helpful:
 - LeadType values in DB: CAR_INSURANCE_LEAD = Auto, HOME_INSURANCE_LEAD = Home — always translate for display
 - Always use display names (not BQ column names) when presenting data
 - LIMIT results to 100 rows for safety
+- **CRITICAL: After calling export_lead_data, NEVER include the download URL in your text response.** The UI automatically renders a download button from the tool result. Just say something brief like "Your export is ready! Click the download button below." Do NOT paste or display the URL — it is long, ugly, and the user already has a clickable button.
 `.trim();
 
 /* ------------------------------------------------------------------ */
