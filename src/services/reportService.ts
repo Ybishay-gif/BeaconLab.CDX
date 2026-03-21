@@ -59,8 +59,6 @@ export type CreateReportInput = {
 
 // ── Schema Discovery (static metadata from dimension table) ───────
 
-const SCHEMA_TTL = 24 * 60 * 60 * 1000; // 24 hours
-
 export async function getTableSchema(_includeOpps = false): Promise<ColumnSchema[]> {
   // Return static curated metadata from the dimension table.
   // All fields are available regardless of includeOpps — the BQ table
@@ -98,7 +96,7 @@ export async function getFilterValues(columnName: string, includeOpps = false): 
   );
 
   const values = rows.map((r) => String(r.val));
-  cacheSet(cacheKey, values, SCHEMA_TTL);
+  cacheSet(cacheKey, values, 24 * 60 * 60 * 1000);
   return values;
 }
 
