@@ -40,6 +40,7 @@ export const ALL_PERMISSIONS = [
   "tickets:add",
   "tickets:approve",
   "tickets:deploy_approve",
+  "tickets:create_module",
   "audit_log:view",
   "usage_analytics:view",
   "sftp_connections:edit",
@@ -106,6 +107,7 @@ export const PERMISSION_GROUPS: Record<string, { label: string; permissions: str
       "tickets:add",
       "tickets:approve",
       "tickets:deploy_approve",
+      "tickets:create_module",
       "audit_log:view",
       "usage_analytics:view",
       "sftp_connections:edit",
@@ -146,6 +148,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "default_targets:edit",
     "tickets:view",
     "tickets:add",
+    "tickets:create_module",
     "audit_log:view",
   ],
   Viewer: [

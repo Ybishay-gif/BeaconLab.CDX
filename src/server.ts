@@ -317,6 +317,166 @@ async function runMigrations() {
       END $$
     `);
 
+    // v5: Hierarchical tickets — Module > User Story > Feature/Bug
+    // New columns for ticket hierarchy and type-specific payloads
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS parent_id TEXT REFERENCES tickets(ticket_id)");
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS module_requirements JSONB");
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS story_details JSONB");
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS planning_qa JSONB");
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS plan_content TEXT");
+    await pgExec("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS registry_module_id TEXT");
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_tickets_parent ON tickets(parent_id)");
+
+    // Expand type constraint to include module and user_story
+    await pgExec(`
+      DO $$ BEGIN
+        ALTER TABLE tickets DROP CONSTRAINT IF EXISTS tickets_type_check;
+      EXCEPTION WHEN others THEN NULL;
+      END $$
+    `);
+    await pgExec(`
+      DO $$ BEGIN
+        ALTER TABLE tickets ADD CONSTRAINT tickets_type_check
+          CHECK (type IN ('bug', 'feature', 'module', 'user_story'));
+      EXCEPTION WHEN others THEN NULL;
+      END $$
+    `);
+
+    // Expand status constraint with module + user story statuses
+    await pgExec(`
+      DO $$ BEGIN
+        ALTER TABLE tickets DROP CONSTRAINT IF EXISTS tickets_status_check;
+      EXCEPTION WHEN others THEN NULL;
+      END $$
+    `);
+    await pgExec(`
+      DO $$ BEGIN
+        ALTER TABLE tickets ADD CONSTRAINT tickets_status_check
+          CHECK (status IN (
+            'todo','pending_spec','pending_spec_approval','spec_approved',
+            'adjusted_spec','pending_deployment','deployment_approved','deployed',
+            'done','reopened',
+            'start_planning','pending_product_review','continue_planning',
+            'plan_approved','pending_detailed_plan_approval','detailed_plan_approved',
+            'feature_list_completed'
+          ));
+      EXCEPTION WHEN others THEN NULL;
+      END $$
+    `);
+
+    // Dynamic modules table (modules created through ticket system)
+    await pgExec(`
+      CREATE TABLE IF NOT EXISTS dynamic_modules (
+        module_id    TEXT PRIMARY KEY,
+        label        TEXT NOT NULL,
+        default_route TEXT,
+        ticket_id    TEXT REFERENCES tickets(ticket_id),
+        is_active    BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    // v5 backward compatibility: create module + user story tickets for existing data
+    // Only runs if no module-type tickets exist yet (idempotent)
+    const existingModules = await pgExec(`SELECT ticket_id FROM tickets WHERE type = 'module' LIMIT 1`);
+    if (existingModules.rows.length === 0) {
+      console.log("[migration] Creating module and user story tickets for backward compatibility...");
+      const modulePages: { moduleId: string; moduleLabel: string; pages: string[] }[] = [
+        { moduleId: "planning", moduleLabel: "Planning", pages: [
+          "Plan Builder", "Targets", "Plan Strategy", "Price Exploration",
+          "Plan Outcome", "Ad Levers", "State & Channel Perf",
+          "Strategy Analysis", "Plans Comparison", "State Analytics", "Report Generator"
+        ]},
+        { moduleId: "channel_recommendations", moduleLabel: "Channel Recommendations", pages: ["Channel Params"] },
+        { moduleId: "settings", moduleLabel: "Settings", pages: [
+          "Default Targets", "User Management", "Tickets", "Audit Log", "Usage Analytics", "SFTP Connections"
+        ]},
+      ];
+
+      for (const mod of modulePages) {
+        // Create module ticket
+        const modResult = await pgExec(`
+          INSERT INTO tickets (ticket_id, type, status, title, description, module, page,
+            created_by, created_by_email, created_at, updated_at)
+          VALUES (gen_random_uuid()::text, 'module', 'detailed_plan_approved',
+            $1, $2, $3, 'N/A', 'system', 'system@beaconlab.com', NOW(), NOW())
+          RETURNING ticket_id
+        `, [`${mod.moduleLabel} Module`, `${mod.moduleLabel} module (retroactively created)`, mod.moduleId]);
+        const moduleTicketId = modResult.rows[0]?.ticket_id;
+        if (!moduleTicketId) continue;
+
+        for (const page of mod.pages) {
+          // Create user story ticket per page
+          const storyResult = await pgExec(`
+            INSERT INTO tickets (ticket_id, type, status, title, description, module, page,
+              parent_id, created_by, created_by_email, created_at, updated_at)
+            VALUES (gen_random_uuid()::text, 'user_story', 'feature_list_completed',
+              $1, $2, $3, $4, $5, 'system', 'system@beaconlab.com', NOW(), NOW())
+            RETURNING ticket_id
+          `, [page, `User story for ${page} (retroactively created)`, mod.moduleId, page, moduleTicketId]);
+          const storyTicketId = storyResult.rows[0]?.ticket_id;
+          if (!storyTicketId) continue;
+
+          // Link existing feature/bug tickets to this user story
+          await pgExec(`
+            UPDATE tickets SET parent_id = $1
+            WHERE type IN ('bug', 'feature') AND module = $2 AND page = $3 AND parent_id IS NULL
+          `, [storyTicketId, mod.moduleId, page]);
+        }
+
+        // Create a "General" user story for any orphaned tickets under this module
+        const generalResult = await pgExec(`
+          INSERT INTO tickets (ticket_id, type, status, title, description, module, page,
+            parent_id, created_by, created_by_email, created_at, updated_at)
+          VALUES (gen_random_uuid()::text, 'user_story', 'feature_list_completed',
+            'General', 'Catch-all user story for unmatched tickets', $1, 'General', $2,
+            'system', 'system@beaconlab.com', NOW(), NOW())
+          RETURNING ticket_id
+        `, [mod.moduleId, moduleTicketId]);
+        const generalStoryId = generalResult.rows[0]?.ticket_id;
+        if (generalStoryId) {
+          await pgExec(`
+            UPDATE tickets SET parent_id = $1
+            WHERE type IN ('bug', 'feature') AND module = $2 AND parent_id IS NULL
+          `, [generalStoryId, mod.moduleId]);
+        }
+      }
+
+      // Handle tickets with unknown modules — create a catch-all module
+      const orphanCount = await pgExec(`
+        SELECT COUNT(*) AS cnt FROM tickets WHERE type IN ('bug', 'feature') AND parent_id IS NULL
+      `);
+      if (Number(orphanCount.rows[0]?.cnt) > 0) {
+        const catchallMod = await pgExec(`
+          INSERT INTO tickets (ticket_id, type, status, title, description, module, page,
+            created_by, created_by_email, created_at, updated_at)
+          VALUES (gen_random_uuid()::text, 'module', 'detailed_plan_approved',
+            'Other', 'Catch-all module for unmatched tickets', 'other', 'N/A',
+            'system', 'system@beaconlab.com', NOW(), NOW())
+          RETURNING ticket_id
+        `);
+        const catchallModId = catchallMod.rows[0]?.ticket_id;
+        if (catchallModId) {
+          const catchallStory = await pgExec(`
+            INSERT INTO tickets (ticket_id, type, status, title, description, module, page,
+              parent_id, created_by, created_by_email, created_at, updated_at)
+            VALUES (gen_random_uuid()::text, 'user_story', 'feature_list_completed',
+              'General', 'Catch-all story for unmatched tickets', 'other', 'General', $1,
+              'system', 'system@beaconlab.com', NOW(), NOW())
+            RETURNING ticket_id
+          `, [catchallModId]);
+          const catchallStoryId = catchallStory.rows[0]?.ticket_id;
+          if (catchallStoryId) {
+            await pgExec(`
+              UPDATE tickets SET parent_id = $1
+              WHERE type IN ('bug', 'feature') AND parent_id IS NULL
+            `, [catchallStoryId]);
+          }
+        }
+      }
+      console.log("[migration] Backward compatibility migration complete.");
+    }
+
     // Reports table (custom report generator)
     await pgExec(`
       CREATE TABLE IF NOT EXISTS reports (

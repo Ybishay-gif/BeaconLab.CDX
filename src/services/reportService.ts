@@ -4,6 +4,7 @@ import { query, table } from "../db/index.js";
 import { bigquery, query as bqQuery } from "../db/bigquery.js";
 import { config } from "../config.js";
 import { cacheGet, cacheSet } from "../cache.js";
+import { REPORT_COLUMNS, COLUMN_MAP, type ColumnMeta } from "../data/reportColumns.js";
 
 const storage = new Storage({ projectId: config.projectId });
 
@@ -30,10 +31,7 @@ export type ReportRow = {
   completed_at: string | null;
 };
 
-export type ColumnSchema = {
-  column_name: string;
-  data_type: string;
-};
+export type ColumnSchema = ColumnMeta;
 
 export type DynamicFilter = {
   column: string;
@@ -59,37 +57,22 @@ export type CreateReportInput = {
   includeOpps?: boolean;
 };
 
-// ── Schema Discovery (cached 24h) ─────────────────────────────────
+// ── Schema Discovery (static metadata from dimension table) ───────
 
-const SCHEMA_CACHE_KEY = "report:table-schema";
-const SCHEMA_TTL = 24 * 60 * 60 * 1000;
+const SCHEMA_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
-export async function getTableSchema(includeOpps = false): Promise<ColumnSchema[]> {
-  const cacheKey = includeOpps ? `${SCHEMA_CACHE_KEY}:opps` : SCHEMA_CACHE_KEY;
-  const cached = cacheGet<ColumnSchema[]>(cacheKey);
-  if (cached) return cached;
-
-  const tableName = includeOpps
-    ? "Cross Tactic Analysis Full Data - with opps"
-    : "Cross Tactic Analysis Full Data ";
-
-  const rows = await bqQuery<ColumnSchema>(
-    `SELECT column_name, data_type
-     FROM \`crblx-beacon-prod.Custom_Reports.INFORMATION_SCHEMA.COLUMNS\`
-     WHERE table_name = '${tableName}'
-     ORDER BY ordinal_position`
-  );
-
-  cacheSet(cacheKey, rows, SCHEMA_TTL);
-  return rows;
+export async function getTableSchema(_includeOpps = false): Promise<ColumnSchema[]> {
+  // Return static curated metadata from the dimension table.
+  // All fields are available regardless of includeOpps — the BQ table
+  // contains all columns, the opps flag only affects the source table
+  // used in queries.
+  return REPORT_COLUMNS;
 }
 
-/** Validate column names against the schema to prevent SQL injection */
-async function validateColumns(columns: string[], includeOpps = false): Promise<void> {
-  const schema = await getTableSchema(includeOpps);
-  const validNames = new Set(schema.map((c) => c.column_name));
+/** Validate column names against the static metadata to prevent SQL injection */
+async function validateColumns(columns: string[], _includeOpps = false): Promise<void> {
   for (const col of columns) {
-    if (!validNames.has(col)) {
+    if (!COLUMN_MAP.has(col)) {
       throw new Error(`Invalid column name: ${col}`);
     }
   }
@@ -503,9 +486,8 @@ export async function generateReport(reportId: string): Promise<void> {
       await validateColumns([f.column], useOpps);
     }
 
-    // Build schema map for date formatting
-    const schemaRows = await getTableSchema(useOpps);
-    const schemaMap = new Map(schemaRows.map((c) => [c.column_name, c.data_type]));
+    // Build schema map for date formatting from static metadata
+    const schemaMap = new Map(REPORT_COLUMNS.map((c) => [c.column_name, c.data_type]));
 
     // Build the query
     const { sql, params } = buildSelectSql(

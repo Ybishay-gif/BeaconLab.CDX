@@ -42,8 +42,9 @@ export async function pgQuery<T extends pg.QueryResultRow = Record<string, unkno
 /**
  * Run raw SQL (no named params). Used for DDL, migrations, etc.
  */
-export async function pgExec(sql: string): Promise<void> {
-  await getPool().query(sql);
+export async function pgExec(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> {
+  const result = params ? await getPool().query(sql, params) : await getPool().query(sql);
+  return { rows: result.rows ?? [] };
 }
 
 /**

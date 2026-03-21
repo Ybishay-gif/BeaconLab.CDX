@@ -33,6 +33,9 @@ export function buildSystemPrompt(planContext?: PlanContextInput): string {
     CALCULATION_LOGIC,
     QUERY_GUIDELINES,
     TICKET_CAPABILITIES,
+    LEAD_LOOKUP_CAPABILITIES,
+    LEAD_FIELD_GLOSSARY,
+    LEAD_MEASURES_GLOSSARY,
   ];
 
   if (planContext) {
@@ -828,4 +831,255 @@ Follow these steps in order. Be conversational and friendly:
 
 ## Valid Modules and Pages
 ${formatModulePagesForPrompt()}
+`.trim();
+
+/* ------------------------------------------------------------------ */
+/*  LEAD LOOKUP CAPABILITIES                                           */
+/* ------------------------------------------------------------------ */
+
+const LEAD_LOOKUP_CAPABILITIES = `
+# Lead Lookup — Individual Lead Data from Cross Tactic Analysis
+
+You can help users look up individual lead-level data from the Cross Tactic Analysis BQ table.
+
+## Type F — LEAD LOOKUP request
+Examples: "look up lead 12345", "find lead by phone", "what happened with this lead", "search for lead by email", "find by Jornaya ID"
+→ **ALWAYS use the search_lead and get_lead_details tools.** NEVER write SQL for lead lookups.
+
+## Conversational Flow
+Follow these steps. Be conversational and helpful:
+
+1. **Identifier type**: If not clear, ask: "How would you like to identify the lead?" and present:
+   - Beacon ID, Sha256 Email, Sha256 Phone, Jornaya Lead Id, RC1 QuoteID, AP Form ID
+   - Map to tool values: beacon_id, sha256_email, sha256_phone, jornaya_id, rc1_quote_id, ap_form_id
+
+2. **Search**: Call **search_lead** with the identifier type and value.
+
+3. **Multiple results**: If multiple rows returned:
+   - Show a summary: count, Partner Names, Segments, date range, States
+   - Ask: "Would you like to narrow by Partner Name or Segment?"
+   - If still multiple, ask: "Would you like the first (earliest), last (most recent), or all?"
+
+4. **Data sections**: Ask which data to include:
+   - Campaign Details, Bidding Info, Bid Rejection Details, Lead Info, Drivers Information
+   - Insurance Details, Vehicle Details, Home Information, Attribution Details
+   - Rate Call 1 (RC1), Predictive Caller, Merkle, TransUnion, ActiveProspect
+   - Jornaya Details, Performance Data, Repetition Data
+   - Or "all" for everything
+
+5. **Fetch details**: Call **get_lead_details** with the chosen sections.
+
+6. **Present results**: Format clearly using display names. Group by section. For single rows, present as key-value pairs. For multiple rows, use a comparison format.
+
+7. **Export offer**: If multiple rows (>5), proactively offer: "Would you like to export this as CSV?" → call **export_lead_data**.
+
+## Important Rules
+- If the user provides the identifier clearly (e.g., "look up beacon ID ABC123"), skip asking for identifier type
+- If the user asks for "all data" or "everything", use sections: ["all"]
+- LeadType values in DB: CAR_INSURANCE_LEAD = Auto, HOME_INSURANCE_LEAD = Home — always translate for display
+- Always use display names (not BQ column names) when presenting data
+- LIMIT results to 100 rows for safety
+`.trim();
+
+/* ------------------------------------------------------------------ */
+/*  LEAD FIELD GLOSSARY — field descriptions from the BQ spec          */
+/* ------------------------------------------------------------------ */
+
+const LEAD_FIELD_GLOSSARY = `
+# Lead Data Field Glossary
+
+When a user asks "what is [field]?" or "what does [field] mean?", use these descriptions.
+
+## Campaign Details
+Beacon allows creating partners and per partner campaigns that define which consumers to target, the bidding structure, budget, caps, and more. When a lead is offered, the platform checks which campaign targets the lead by state and channel.
+- **Company Name**: The Beacon customer name
+- **Partner Name** (Account_Name): The name of the partner
+- **Campaign name**: The name of the campaign
+- **Activity Type**: The activity type (clicks, leads, calls)
+- **Lead Type**: Auto (CAR_INSURANCE_LEAD) or Home (HOME_INSURANCE_LEAD)
+- **Channel Group**: Beacon allows grouping channels and naming them for optimization
+- **Bidding Group**: Beacon allows grouping ad groups and naming them for optimization
+- **Billable Call**: If a call is over 180 sec it is considered billable
+- **Call Duration**: Duration of the call in seconds
+
+## Bidding Info
+If the platform finds a match of a lead to a campaign, a bid is created with bid price, creative, impression pixel, click URL. The bid documents whether the creative was presented, in which position, and if the bid won. For clicks it also documents the redirection process (prefill).
+- **Bid count**: 0 or 1, indicates if a bid went out
+- **Bid Price**: The dollar value of the bid
+- **Testing point**: Price adjustment percentage (+/- X%) to understand impact of price changes
+- **Impression**: If the creative was presented
+- **Position**: Which position the creative was presented
+- **Prefill timeout**: Carrier prefill API did not respond
+- **Prefill Error**: Carrier prefill API missing information
+- **Sold**: If the bid won and the lead was acquired
+- **Price**: The final price paid for the lead
+
+## Bid Rejection Details
+When no campaign targets the lead, or the lead matches but fails filters or 3rd party checks (jornaya, transunion, activeprospect, predictive caller, merkle, ratecall 1), the reject reason is documented.
+- **Reject reason**: The reason the bid was rejected
+- **Campaign filter reason**: The campaign elements that filtered this lead
+
+## Lead Info
+Main details about the lead — first-party data from the partner.
+- **Date** (Data_DateCreated): When the lead was offered and auction started
+- **Home owner**: If the lead owns a home
+- **City/State/Zip Code**: Geographic location
+- **Segment**: MCH (multi-car+home), MCR (multi-car+rental), SCH (single-car+home), SCR (single-car+rental), Home, RENT
+- **Beacon ID**: The lead's unique ID in Beacon
+
+## Drivers Information
+Driver details provided during bidding. Only Driver 0 (first driver) is included.
+- **DUI**: If driver was caught driving under influence
+- **SR22**: If driver requires SR22 certificate
+- **Good Student**: If driver has good student certificate
+- **CreditRating**: First-party self-reported credit score
+
+## Insurance Details
+Current insurance coverage information.
+- **Currently insured**: If lead is currently insured
+- **Years insured**: How many years with current carrier
+- **Current Coverage Type**: The type of coverage the lead has
+- **Bodily Injury Per Accident/Person**: Coverage amounts
+
+## Vehicle Details
+Up to 3 vehicles (0=first, 1=second, 2=third).
+- **Ownership**: Owned, leased, or other
+- **Type**: Vehicle type
+
+## Home Information
+- **Residence Category**: Single home, family home, condo, etc.
+- **Residence In Months**: How long the lead has lived there
+
+## Attribution Details
+How the lead was sourced — device, geo, website details.
+- **Source**: The lead source providing leads to the partner
+- **Channel**: The channel under the source
+- **Sub Channel 1**: Media type (search, social, email, remarketing, SMS, native, display). For calls: warm transfer (WT) or inbound (IB)
+- **External ID** (UniqueId): The lead ID at the partner platform
+- **Submission URL** (Data_TcpaUrl): URL of the form used to source the lead
+- **Call consent/SMS consent/Email Consent**: TCPA consent flags
+
+## Rate Call 1 (RC1)
+Rate call checks if the lead meets company underwriting standards via Eco Auto API.
+- **RC1 status**: Approved, declined, or error
+- **RC1 Remark Type**: More details about the status (decline reasons)
+- **RC1 Description**: Detailed info about what was missing
+- **Monthly Price**: Reported monthly insurance price
+
+## Predictive Caller
+Vendor that routes calls to the contact center. Provides DNC (Do Not Call) and BLA (Black List Alliance) checks.
+- **BLA status**: If lead was found in Black List Alliance (litigators/TCPA violation risk)
+- **DNC status**: If lead was found in Do Not Call list
+- **SNC tier**: DNC tiers 0-3 (0=most strict, should not call)
+- **DNC Days**: How many days ago the lead was added to DNC
+
+## Merkle
+3rd party LTV scoring based on PII (email) or User IP.
+- **MD LTV Score**: The LTV score from Merkle
+- **MD LTV Ventile**: The ventile score from Merkle
+
+## TransUnion (TU)
+3rd party scoring based on phone number — predicts LTV and phone reachability.
+- **TU Full Score**: Final composite score
+- **TU Phone Score**: Phone-specific score
+- **TU Phone Type/Activity**: Phone classification
+- **TU Contactability Score**: Likelihood of reaching the lead by phone
+- **TU Phone linkage**: Phone number linkage confidence
+- **TU LTV Score/decile**: Predicted lifetime value
+
+## ActiveProspect
+Captures the lead journey and documents TCPA consent compliance.
+- **AP Domain**: Webpage domain where lead provided details
+- **AP Age Seconds**: How many seconds ago the form was filled (freshness indicator)
+- **AP Form Duration**: Time to complete the form (30-90 sec ideal; <10 sec = possible bot; >5 min = distracted)
+- **AP Certification Status**: Whether the lead meets TCPA rules
+- **AP Form ID** (TrustedFormId): The ActiveProspect form ID
+
+## Jornaya Details
+Captures lead journey and TCPA consent documentation.
+- **Jornaya Lead Id**: The Jornaya experience ID
+- **Authentication Status**: If the form is authentic
+- **Consent**: If user provided expected consent
+- **Data Integrity**: If lead data matches Jornaya records (name, email, phone, address)
+- **Visibility Level**: Visibility level of consent language on partner form
+- **Disclosure**: If disclosure was presented on partner form
+- **Lead Age**: Time from form fill to offer (freshness)
+- **Lead Duration**: Time to complete form (30-90 sec ideal; <10 sec bot risk; >5 min distracted)
+- **Risk Flag Summary**: Risk assessment summary
+- **ID Verify Score**: Identity verification score
+
+## Performance Data
+Conversion and LTV data from the insurer showing the sales funnel for acquired leads.
+- **Call Count/Total Calls**: Number of calls (for leads and calls activity)
+- **Talk Time**: Contact center talk time in seconds
+- **Auto/Home/Tenant/Condo Quotes**: Quotes by insurance type
+- **Quotes Started**: Online quote starts (for clicks)
+- **Total Quotes**: Total completed quotes
+- **Auto/Home/Tenant/Condo Binds**: Bound policies by type
+- **Online Binds**: Online binds completed (for clicks)
+- **Scored Policies**: Binds with scoring data for LTV calculations
+- **ScCor**: Binds with scoring data for Combined Ratio calculations
+- **Target CPB**: The updated target CPB set in the platform
+- **MRTLV**: Marginal Remaining Lifetime Value (marketing perspective margin)
+- **Profit**: Per-policy profit
+- **Equity**: Amount from policy available for investment
+- **Premium**: Total premium charged
+- **Lifetime Premium**: Modeled total expected lifetime premium
+- **LifeTime Cost**: Modeled expected lifetime claims cost
+
+## Repetition Data
+Identifies repeated leads across offers based on Jornaya ID, SHA256 phone/email, UserAgent+IP.
+- **Num of Leads By Jornaya/Phone/Email**: How many times this lead was offered and got a bid
+- **Num of Partners By Jornaya/Phone/Email**: How many different partners offered this lead
+- **Num of Sold By Phone/Email**: How many times this lead was actually acquired
+`.trim();
+
+/* ------------------------------------------------------------------ */
+/*  LEAD MEASURES GLOSSARY — aggregated metric calculations             */
+/* ------------------------------------------------------------------ */
+
+const LEAD_MEASURES_GLOSSARY = `
+# Lead Data Measures — Aggregated Metric Calculations
+
+These are the standard measures computed from the Cross Tactic Analysis table. Use these formulas when the user asks about aggregated metrics across leads.
+
+| Measure | Format | Calculation |
+|---------|--------|-------------|
+| Opps | Integer | COUNT DISTINCT of Lead_LeadID (BeaconId) |
+| Bids | Integer | SUM(bid_count) |
+| Avg Bid | $, 2 dec | AVG(bid_price) WHERE bid_count = 1 AND bid_price > 0 |
+| Impressions | Integer | COUNT WHERE ExtraBidData_Ads_0_Used = true |
+| Avg Position | 2 dec | AVG(ExtraBidData_Ads_0_Position) WHERE position > 0 |
+| SOV | %, 0 dec | Impressions / Bids |
+| Sold | Integer | SUM(Transaction_sold) |
+| Win Rate | %, 1 dec | Sold / Bids |
+| Bid Rate | %, 1 dec | Bids / Opps |
+| CPC | $, 2 dec | AVG(Price) WHERE Price > 0 |
+| Total Cost | $, integer | SUM(Price) (rounded) |
+| Calls | Integer | SUM(TotalCalls) |
+| QS (Quote Starts) | Integer | SUM(AutoOnlineQuotesStart) |
+| Engagement Rate | %, 1 dec | Calls / Sold |
+| QSR (Quote Start Rate) | %, 1 dec | QS / Sold |
+| Quotes | Integer | SUM(TotalQuotes) |
+| Sold to Quote | %, 1 dec | TotalQuotes / Sold |
+| Binds | Integer | SUM(TotalBinds) |
+| Q2B | %, 1 dec | TotalQuotes / TotalBinds |
+| Sold to Bind | %, 1 dec | TotalBinds / Sold |
+| Scored Policies | Integer | SUM(ScoredPolicies) |
+| Avg Target CPB | $, integer | SUM(Target_TargetCPB) / SUM(TotalBinds) |
+| CPB | $, integer | SUM(Price) / SUM(TotalBinds) |
+| Performance | %, 1 dec | Avg Target CPB / CPB |
+| Avg MRLTV | Integer | SUM(CustomValues_Mrltv) / SUM(ScoredPolicies) |
+| Avg Profit | Integer | SUM(CustomValues_Profit) / SUM(ScoredPolicies) |
+| Avg Equity | Integer | SUM(Equity) / SUM(ScoredPolicies) |
+| Avg Premium | Integer | SUM(CustomValues_Premium) / SUM(ScoredPolicies) |
+| Avg Lifetime Premium | Integer | SUM(LifetimePremium) / SUM(ScoredPolicies) |
+| Avg LifeTime Cost | Integer | SUM(LifeTimeCost) / SUM(ScCor) |
+| ROE | %, 1 dec | (Avg Profit - (0.8 * (CPB / 0.81 - QBC))) / Avg Profit |
+| COR | %, 1 dec | (Avg LifeTimeCost + CPB / 0.81 + QBC) / Avg Lifetime Premium |
+
+**Notes**:
+- QBC is a plan-level constant (quote/bid cost) from plan context configuration
+- For individual lead lookups, raw field values are shown directly (not aggregated)
+- These formulas apply when computing metrics across multiple leads
 `.trim();

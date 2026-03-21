@@ -7,6 +7,7 @@ import {
   deleteSession,
   updateSessionTitle,
 } from "../../services/aiChatSessionService.js";
+import { getExportDownloadUrl } from "../../services/leadLookupService.js";
 
 const planContextSchema = z.object({
   planId: z.string().optional(),
@@ -109,6 +110,21 @@ aiChatRoutes.delete("/ai-chat/sessions/:sessionId", async (req, res, next) => {
     }
     res.json({ ok: true });
   } catch (error) {
+    next(error);
+  }
+});
+
+/* ---- Lead export download ---- */
+aiChatRoutes.get("/ai-chat/export/:exportId/download", async (req, res, next) => {
+  try {
+    const url = await getExportDownloadUrl(req.params.exportId);
+    res.json({ url });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("No such object")) {
+      res.status(404).json({ error: "Export not found or expired" });
+      return;
+    }
     next(error);
   }
 });

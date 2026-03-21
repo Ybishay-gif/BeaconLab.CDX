@@ -10,6 +10,7 @@ import {
   type FunctionDeclarationsTool,
 } from "@google/generative-ai";
 import { createReport, getTableSchema, getFilterValues, type CreateReportInput } from "./reportService.js";
+import { searchLeads, getLeadDetails, exportLeadData, getExportDownloadUrl, SECTION_DISPLAY, IDENTIFIER_DISPLAY, type RowSelection } from "./leadLookupService.js";
 import { getPriceExploration, type PriceExplorationFilters, type PriceExplorationRow } from "./analyticsService.js";
 import { getAdLeverData } from "./adLeverService.js";
 import { createTicket, listTickets, getTicket, updateTicket, STATUS_TRANSITIONS, type Attachment, type TicketStatus } from "./ticketsService.js";
@@ -251,6 +252,106 @@ export const ACTION_TOOLS: FunctionDeclarationsTool = {
       description:
         "List all available modules and their pages in the platform. Use this when helping a user create a ticket and you need to confirm the correct module and page name.",
     },
+    /* ---- Lead Lookup tools ---- */
+    {
+      name: "search_lead",
+      description:
+        "Search for a lead in the Cross Tactic Analysis data by identifier. Returns matching lead summaries (Beacon ID, Partner Name, Segment, Date, State, Channel, Lead Type) to help narrow down the correct lead. Use this when a user wants to look up, find, or investigate a specific lead. After getting results, if multiple matches are found, ask the user to narrow by Partner Name or Segment, or choose first/last/all.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          identifier_type: {
+            type: SchemaType.STRING,
+            description: "How to identify the lead. One of: beacon_id, sha256_email, sha256_phone, jornaya_id, rc1_quote_id, ap_form_id",
+          },
+          identifier_value: {
+            type: SchemaType.STRING,
+            description: "The identifier value to search for",
+          },
+          account_name: {
+            type: SchemaType.STRING,
+            description: "Optional: narrow results by Partner Name (Account_Name)",
+          },
+          segment: {
+            type: SchemaType.STRING,
+            description: "Optional: narrow results by Segment (MCH, MCR, SCH, SCR, Home, RENT)",
+          },
+        },
+        required: ["identifier_type", "identifier_value"],
+      },
+    },
+    {
+      name: "get_lead_details",
+      description:
+        "Fetch detailed data for a lead from the Cross Tactic Analysis table. Call this AFTER search_lead has identified the lead(s). Specify which data sections to include. Available sections: campaign_details, bidding_info, bid_rejection, lead_info, drivers, insurance, vehicles, home, attribution, rc1, predictive_caller, merkle, transunion, activeprospect, jornaya, performance, repetition. Use 'all' for everything.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          identifier_type: {
+            type: SchemaType.STRING,
+            description: "Same identifier used in search_lead",
+          },
+          identifier_value: {
+            type: SchemaType.STRING,
+            description: "Same identifier value used in search_lead",
+          },
+          sections: {
+            type: SchemaType.ARRAY,
+            items: { type: SchemaType.STRING },
+            description: "Data sections to include: campaign_details, bidding_info, bid_rejection, lead_info, drivers, insurance, vehicles, home, attribution, rc1, predictive_caller, merkle, transunion, activeprospect, jornaya, performance, repetition, or 'all'",
+          },
+          account_name: {
+            type: SchemaType.STRING,
+            description: "Optional filter by Partner Name",
+          },
+          segment: {
+            type: SchemaType.STRING,
+            description: "Optional filter by Segment",
+          },
+          row_selection: {
+            type: SchemaType.STRING,
+            description: "When multiple rows: 'first' (earliest), 'last' (most recent), 'all' (return all, max 100). Default: 'all'",
+          },
+        },
+        required: ["identifier_type", "identifier_value", "sections"],
+      },
+    },
+    {
+      name: "export_lead_data",
+      description:
+        "Export lead data as a CSV file for download. Use this when the user has multiple rows and wants to export them, or explicitly asks for a CSV/PDF export. Generates a file and returns a download link.",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          identifier_type: {
+            type: SchemaType.STRING,
+            description: "Identifier type used to find the lead(s)",
+          },
+          identifier_value: {
+            type: SchemaType.STRING,
+            description: "Identifier value",
+          },
+          sections: {
+            type: SchemaType.ARRAY,
+            items: { type: SchemaType.STRING },
+            description: "Data sections to include in the export. Use 'all' for everything.",
+          },
+          account_name: {
+            type: SchemaType.STRING,
+            description: "Optional filter by Partner Name",
+          },
+          segment: {
+            type: SchemaType.STRING,
+            description: "Optional filter by Segment",
+          },
+          format: {
+            type: SchemaType.STRING,
+            description: "Export format: 'csv' (default). PDF not yet supported.",
+          },
+        },
+        required: ["identifier_type", "identifier_value", "sections"],
+      },
+    },
   ],
 };
 
@@ -263,7 +364,7 @@ export interface ActionResult {
   response: Record<string, unknown>;
   /** Metadata sent to the frontend for rendering action UI */
   action?: {
-    type: "report_created" | "action_list" | "ticket_created" | "ticket_list" | "ticket_detail" | "ticket_updated";
+    type: "report_created" | "action_list" | "ticket_created" | "ticket_list" | "ticket_detail" | "ticket_updated" | "lead_search_results" | "lead_details" | "lead_export";
     payload: unknown;
   };
 }
@@ -321,6 +422,12 @@ export async function executeAction(
       return await handleUpdateTicketStatus(args, user);
     case "list_modules_and_pages":
       return handleListModulesAndPages();
+    case "search_lead":
+      return await handleSearchLead(args);
+    case "get_lead_details":
+      return await handleGetLeadDetails(args);
+    case "export_lead_data":
+      return await handleExportLeadData(args);
     default:
       return {
         response: { error: `Unknown action: ${actionName}` },
@@ -344,6 +451,11 @@ function handleListActions(): ActionResult {
       name: "Check My Tickets",
       description: "View your submitted tickets and their current status.",
       example: "Show my open tickets",
+    },
+    {
+      name: "Lead Lookup",
+      description: "Look up individual lead data from the Cross Tactic Analysis table. Search by Beacon ID, Sha256 Email/Phone, Jornaya ID, or other identifiers.",
+      example: "Look up a lead",
     },
   ];
 
@@ -953,4 +1065,163 @@ function handleListModulesAndPages(): ActionResult {
       })),
     },
   };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Lead Lookup handlers                                               */
+/* ------------------------------------------------------------------ */
+
+async function handleSearchLead(args: Record<string, unknown>): Promise<ActionResult> {
+  const identifierType = args.identifier_type as string;
+  const identifierValue = args.identifier_value as string;
+  if (!identifierType || !identifierValue) {
+    return { response: { error: "identifier_type and identifier_value are required" } };
+  }
+
+  try {
+    const result = await searchLeads(identifierType, identifierValue, {
+      account_name: args.account_name as string | undefined,
+      segment: args.segment as string | undefined,
+    });
+
+    const identifierDisplay = IDENTIFIER_DISPLAY[identifierType as keyof typeof IDENTIFIER_DISPLAY] || identifierType;
+
+    if (result.total === 0) {
+      return {
+        response: {
+          total: 0,
+          message: `No leads found matching ${identifierDisplay} = "${identifierValue}"`,
+        },
+      };
+    }
+
+    // Summarize unique values for narrowing
+    const uniqueAccounts = [...new Set(result.rows.map((r) => r.Account_Name).filter(Boolean))];
+    const uniqueSegments = [...new Set(result.rows.map((r) => r.Segments).filter(Boolean))];
+
+    return {
+      response: {
+        total: result.total,
+        rows: result.rows.slice(0, 20), // Send max 20 to Gemini for context
+        unique_accounts: uniqueAccounts.slice(0, 20),
+        unique_segments: uniqueSegments,
+        narrowing_hint:
+          result.total > 1
+            ? "Multiple leads found. Ask the user if they want to narrow by Partner Name or Segment, or choose first (earliest), last (most recent), or all."
+            : undefined,
+      },
+      action: {
+        type: "lead_search_results",
+        payload: {
+          total: result.total,
+          rows: result.rows.slice(0, 20),
+          identifierType: identifierDisplay,
+          identifierValue,
+        },
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { response: { error: `Lead search failed: ${msg}` } };
+  }
+}
+
+async function handleGetLeadDetails(args: Record<string, unknown>): Promise<ActionResult> {
+  const identifierType = args.identifier_type as string;
+  const identifierValue = args.identifier_value as string;
+  const sectionKeys = (args.sections as string[]) || ["all"];
+  const rowSelection = (args.row_selection as RowSelection) || "all";
+
+  if (!identifierType || !identifierValue) {
+    return { response: { error: "identifier_type and identifier_value are required" } };
+  }
+
+  try {
+    const result = await getLeadDetails(
+      identifierType,
+      identifierValue,
+      sectionKeys,
+      {
+        account_name: args.account_name as string | undefined,
+        segment: args.segment as string | undefined,
+      },
+      rowSelection,
+    );
+
+    // Build flat display for Gemini (section → key:value pairs)
+    const displaySections: Record<string, Record<string, unknown>[]> = {};
+    for (const sec of result.sections) {
+      displaySections[sec.sectionDisplay] = sec.data;
+    }
+
+    return {
+      response: {
+        total_rows: result.totalRows,
+        sections: displaySections,
+        export_hint:
+          result.totalRows > 5
+            ? "Multiple rows returned. Offer the user to export this data as CSV using the export_lead_data tool."
+            : undefined,
+      },
+      action: {
+        type: "lead_details",
+        payload: {
+          totalRows: result.totalRows,
+          sections: result.sections,
+        },
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { response: { error: `Lead details failed: ${msg}` } };
+  }
+}
+
+async function handleExportLeadData(args: Record<string, unknown>): Promise<ActionResult> {
+  const identifierType = args.identifier_type as string;
+  const identifierValue = args.identifier_value as string;
+  const sectionKeys = (args.sections as string[]) || ["all"];
+
+  if (!identifierType || !identifierValue) {
+    return { response: { error: "identifier_type and identifier_value are required" } };
+  }
+
+  try {
+    const exportResult = await exportLeadData(
+      identifierType,
+      identifierValue,
+      sectionKeys,
+      {
+        account_name: args.account_name as string | undefined,
+        segment: args.segment as string | undefined,
+      },
+      "csv",
+    );
+
+    const downloadUrl = await getExportDownloadUrl(exportResult.exportId);
+
+    return {
+      response: {
+        export_id: exportResult.exportId,
+        file_name: exportResult.fileName,
+        row_count: exportResult.rowCount,
+        format: exportResult.format,
+        download_url: downloadUrl,
+        message: `Export ready: ${exportResult.rowCount} rows exported as CSV.`,
+      },
+      action: {
+        type: "lead_export",
+        payload: {
+          exportId: exportResult.exportId,
+          fileName: exportResult.fileName,
+          rowCount: exportResult.rowCount,
+          format: exportResult.format,
+          downloadUrl,
+        },
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { response: { error: `Lead export failed: ${msg}` } };
+  }
 }
