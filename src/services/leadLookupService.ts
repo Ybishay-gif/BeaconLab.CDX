@@ -7,6 +7,7 @@
 
 import { randomUUID } from "node:crypto";
 import { Storage } from "@google-cloud/storage";
+import PDFDocument from "pdfkit";
 import { query as bqQuery } from "../db/bigquery.js";
 import { config } from "../config.js";
 
@@ -514,7 +515,7 @@ export async function getLeadDetails(
 }
 
 /* ------------------------------------------------------------------ */
-/*  Export lead data (CSV)                                              */
+/*  Export lead data (CSV or PDF)                                       */
 /* ------------------------------------------------------------------ */
 
 export interface ExportResult {
@@ -525,28 +526,29 @@ export interface ExportResult {
   gcsPath: string;
 }
 
-export async function exportLeadData(
+/** Query lead data for export — shared by CSV and PDF */
+async function queryForExport(
   identifierType: string,
   identifierValue: string,
   sectionKeys: string[],
   filters?: { account_name?: string; segment?: string },
-  format: "csv" | "pdf" = "csv",
-): Promise<ExportResult> {
+) {
   const idCol = resolveIdentifierColumn(identifierType);
   const sections = resolveSections(sectionKeys);
   const { clause, params } = buildWhere(idCol, filters);
 
-  // Collect columns in order
-  const orderedColumns: ColumnDef[] = [];
+  // Collect columns grouped by section (for PDF) and flat (for CSV)
+  const sectionColMap: { section: SectionKey; display: string; cols: ColumnDef[] }[] = [];
+  const allColumns: ColumnDef[] = [];
   for (const sk of sections) {
-    for (const col of SECTION_COLUMNS[sk]) {
-      if (!orderedColumns.find((oc) => oc.bq === col.bq)) {
-        orderedColumns.push(col);
-      }
+    const cols = SECTION_COLUMNS[sk];
+    sectionColMap.push({ section: sk, display: SECTION_DISPLAY[sk], cols });
+    for (const col of cols) {
+      if (!allColumns.find((c) => c.bq === col.bq)) allColumns.push(col);
     }
   }
 
-  const selectCols = orderedColumns.map((col) => bqCol(col.bq)).join(", ");
+  const selectCols = allColumns.map((col) => bqCol(col.bq)).join(", ");
   const sql = `
     SELECT ${selectCols}
     FROM ${config.rawCrossTacticTable}
@@ -560,56 +562,171 @@ export async function exportLeadData(
     ...params,
   });
 
-  // Build CSV
-  const headers = orderedColumns.map((col) => col.display);
-  const csvLines = [headers.join(",")];
+  return { rows, allColumns, sectionColMap };
+}
+
+/** Build CSV content */
+function buildCsv(rows: Record<string, unknown>[], columns: ColumnDef[]): string {
+  const headers = columns.map((c) => c.display);
+  const lines = [headers.join(",")];
   for (const row of rows) {
-    const values = orderedColumns.map((col) => {
+    const values = columns.map((col) => {
       const val = row[col.bq];
       if (val === null || val === undefined) return "";
       const str = String(val);
-      // Escape CSV values that contain commas, quotes, or newlines
       if (str.includes(",") || str.includes('"') || str.includes("\n")) {
         return `"${str.replace(/"/g, '""')}"`;
       }
       return str;
     });
-    csvLines.push(values.join(","));
+    lines.push(values.join(","));
   }
+  return lines.join("\n");
+}
 
-  const csvContent = csvLines.join("\n");
+/** Build PDF buffer — one section per group, key-value layout for single rows, table for multiple */
+function buildPdf(
+  rows: Record<string, unknown>[],
+  sectionColMap: { section: SectionKey; display: string; cols: ColumnDef[] }[],
+  identifierValue: string,
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: "A4", margin: 40 });
+    const chunks: Buffer[] = [];
+    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    // Title
+    doc.fontSize(16).font("Helvetica-Bold").text("Lead Data Export", { align: "center" });
+    doc.moveDown(0.3);
+    doc.fontSize(9).font("Helvetica").text(`ID: ${identifierValue}  |  ${rows.length} row(s)  |  ${new Date().toISOString().slice(0, 10)}`, { align: "center" });
+    doc.moveDown(0.8);
+
+    for (const sec of sectionColMap) {
+      // Section header
+      doc.fontSize(11).font("Helvetica-Bold").fillColor("#2563eb").text(sec.display);
+      doc.moveDown(0.2);
+      doc.fillColor("#000000");
+
+      if (rows.length === 1) {
+        // Single row: key-value pairs
+        const row = rows[0];
+        for (const col of sec.cols) {
+          const val = row[col.bq];
+          if (val === null || val === undefined || val === "") continue;
+          doc.fontSize(8).font("Helvetica-Bold").text(`${col.display}: `, { continued: true });
+          doc.font("Helvetica").text(String(val));
+        }
+      } else {
+        // Multiple rows: compact table
+        const visibleCols = sec.cols.filter((col) =>
+          rows.some((r) => r[col.bq] != null && r[col.bq] !== ""),
+        ).slice(0, 8); // max 8 cols to fit on page
+
+        if (visibleCols.length > 0) {
+          // Header row
+          const colWidth = (doc.page.width - 80) / visibleCols.length;
+          const startX = 40;
+          let y = doc.y;
+
+          doc.fontSize(7).font("Helvetica-Bold");
+          visibleCols.forEach((col, i) => {
+            doc.text(col.display, startX + i * colWidth, y, {
+              width: colWidth - 4,
+              align: "left",
+            });
+          });
+          y = doc.y + 2;
+          doc.moveTo(startX, y).lineTo(doc.page.width - 40, y).stroke();
+          y += 3;
+
+          // Data rows
+          doc.font("Helvetica").fontSize(7);
+          for (const row of rows.slice(0, 50)) {
+            if (y > doc.page.height - 60) {
+              doc.addPage();
+              y = 40;
+            }
+            visibleCols.forEach((col, i) => {
+              const val = row[col.bq];
+              doc.text(
+                val != null ? String(val).slice(0, 30) : "",
+                startX + i * colWidth,
+                y,
+                { width: colWidth - 4, align: "left" },
+              );
+            });
+            y = doc.y + 1;
+          }
+          if (rows.length > 50) {
+            doc.fontSize(7).font("Helvetica-Oblique").text(`... and ${rows.length - 50} more rows`);
+          }
+        }
+      }
+
+      doc.moveDown(0.6);
+
+      // Page break if near bottom
+      if (doc.y > doc.page.height - 100) {
+        doc.addPage();
+      }
+    }
+
+    doc.end();
+  });
+}
+
+export async function exportLeadData(
+  identifierType: string,
+  identifierValue: string,
+  sectionKeys: string[],
+  filters?: { account_name?: string; segment?: string },
+  format: "csv" | "pdf" = "pdf",
+): Promise<ExportResult> {
+  const { rows, allColumns, sectionColMap } = await queryForExport(
+    identifierType, identifierValue, sectionKeys, filters,
+  );
+
   const exportId = randomUUID();
-  const fileName = `lead-export-${exportId}.csv`;
+  const ext = format === "pdf" ? "pdf" : "csv";
+  const fileName = `lead-export-${exportId}.${ext}`;
   const gcsPath = `exports/${fileName}`;
-
-  // Upload to GCS
   const bucket = storage.bucket(config.reportsBucket);
   const file = bucket.file(gcsPath);
-  await file.save(csvContent, {
-    contentType: "text/csv",
-    metadata: { contentDisposition: `attachment; filename="${fileName}"` },
-  });
 
-  return {
-    exportId,
-    fileName,
-    rowCount: rows.length,
-    format: "csv",
-    gcsPath,
-  };
+  if (format === "pdf") {
+    const pdfBuffer = await buildPdf(rows, sectionColMap, identifierValue);
+    await file.save(pdfBuffer, {
+      contentType: "application/pdf",
+      metadata: { contentDisposition: `attachment; filename="${fileName}"` },
+    });
+  } else {
+    const csvContent = buildCsv(rows, allColumns);
+    await file.save(csvContent, {
+      contentType: "text/csv",
+      metadata: { contentDisposition: `attachment; filename="${fileName}"` },
+    });
+  }
+
+  return { exportId, fileName, rowCount: rows.length, format: ext, gcsPath };
 }
 
 /** Get a signed download URL for an export */
 export async function getExportDownloadUrl(exportId: string): Promise<string> {
-  // The export file is stored at exports/lead-export-{exportId}.csv
-  const gcsPath = `exports/lead-export-${exportId}.csv`;
-  const [url] = await storage
-    .bucket(config.reportsBucket)
-    .file(gcsPath)
-    .getSignedUrl({
-      version: "v4",
-      action: "read",
-      expires: Date.now() + 15 * 60 * 1000, // 15 minutes
-    });
-  return url;
+  // Try PDF first, then CSV
+  const bucket = storage.bucket(config.reportsBucket);
+  for (const ext of ["pdf", "csv"]) {
+    const gcsPath = `exports/lead-export-${exportId}.${ext}`;
+    const [exists] = await bucket.file(gcsPath).exists();
+    if (exists) {
+      const [url] = await bucket.file(gcsPath).getSignedUrl({
+        version: "v4",
+        action: "read",
+        expires: Date.now() + 15 * 60 * 1000,
+      });
+      return url;
+    }
+  }
+  throw new Error("Export file not found");
 }
