@@ -290,7 +290,23 @@ export async function handleAiChat(
   }
   if (!pass1Text?.trim()) {
     // Response has no text (e.g. blocked by safety filters, empty Gemini response)
-    const fallback = "I wasn't able to generate a response. Could you rephrase your question?";
+    // Retry once before giving up
+    try {
+      const retryResp = await withRetry(() => chat.sendMessage("Please try again to answer my previous message."), 1, 2000);
+      const retryFnCall = retryResp.response.candidates?.[0]?.content?.parts?.find((p) => p.functionCall);
+      if (retryFnCall?.functionCall) {
+        return await handleFunctionCall(chat, session, retryFnCall.functionCall.name, (retryFnCall.functionCall.args as Record<string, unknown>) || {}, user, { sessionId, userMessage: message, isFirstMessage }, planContext, attachments);
+      }
+      const retryText = retryResp.response.text?.()?.trim();
+      if (retryText) {
+        session.history.push({ role: "model", parts: [{ text: retryText }] });
+        trimHistory(session);
+        await persistMessages(sessionId, user.userId, message, retryText, undefined, undefined, isFirstMessage);
+        return { answer: retryText };
+      }
+    } catch { /* retry failed, fall through */ }
+
+    const fallback = "I wasn't able to generate a response. Could you try again or rephrase your question?";
     session.history.push({ role: "model", parts: [{ text: fallback }] });
     trimHistory(session);
     return { answer: fallback };
