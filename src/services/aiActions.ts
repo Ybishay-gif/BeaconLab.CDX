@@ -319,7 +319,7 @@ export const ACTION_TOOLS: FunctionDeclarationsTool = {
     {
       name: "export_lead_data",
       description:
-        "Export lead data as a CSV file for download. Use this when the user has multiple rows and wants to export them, or explicitly asks for a CSV/PDF export. Generates a file and returns a download link.",
+        "Export lead data as a PDF or CSV file for download. Use this when the user wants to export lead data, explicitly asks for export, or clicks the Export PDF button. Generates a file and returns a download link. Default format is PDF.",
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
@@ -346,7 +346,7 @@ export const ACTION_TOOLS: FunctionDeclarationsTool = {
           },
           format: {
             type: SchemaType.STRING,
-            description: "Export format: 'csv' (default). PDF not yet supported.",
+            description: "Export format: 'pdf' (default) or 'csv'.",
           },
         },
         required: ["identifier_type", "identifier_value", "sections"],
@@ -1160,7 +1160,7 @@ async function handleGetLeadDetails(args: Record<string, unknown>): Promise<Acti
         sections: displaySections,
         export_hint:
           result.totalRows > 5
-            ? "Multiple rows returned. Offer the user to export this data as CSV using the export_lead_data tool."
+            ? "Multiple rows returned. Offer the user to export this data as PDF using the export_lead_data tool."
             : undefined,
       },
       action: {
@@ -1195,7 +1195,7 @@ async function handleExportLeadData(args: Record<string, unknown>): Promise<Acti
         account_name: args.account_name as string | undefined,
         segment: args.segment as string | undefined,
       },
-      "csv",
+      (args.format as "csv" | "pdf") || "pdf",
     );
 
     const downloadUrl = await getExportDownloadUrl(exportResult.exportId);
@@ -1207,7 +1207,7 @@ async function handleExportLeadData(args: Record<string, unknown>): Promise<Acti
         row_count: exportResult.rowCount,
         format: exportResult.format,
         download_url: downloadUrl,
-        message: `Export ready: ${exportResult.rowCount} rows exported as CSV.`,
+        message: `Export ready: ${exportResult.rowCount} rows exported as ${exportResult.format.toUpperCase()}.`,
       },
       action: {
         type: "lead_export",
