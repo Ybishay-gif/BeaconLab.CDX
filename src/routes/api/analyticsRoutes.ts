@@ -368,14 +368,15 @@ analyticsRoutes.post("/analytics/cross-tactic", async (req, res, next) => {
     const body = req.body as Partial<CrossTacticRequest>;
 
     const dimensions = Array.isArray(body.dimensions) ? body.dimensions : [];
-    const metrics = Array.isArray(body.metrics) ? body.metrics : ["row_count"];
+    const metrics = Array.isArray(body.metrics) ? body.metrics : ["opps", "bids", "sold", "total_cost"];
     const filters: Record<string, string[]> = typeof body.filters === "object" && body.filters ? body.filters : {};
     const startDate = typeof body.startDate === "string" ? body.startDate : "";
     const endDate = typeof body.endDate === "string" ? body.endDate : "";
     const drillPath: DrillStep[] = Array.isArray(body.drillPath) ? body.drillPath : [];
+    const qbc = typeof body.qbc === "number" ? body.qbc : 0;
 
     if (!dimensions.length) {
-      res.status(400).json({ error: "dimensions array is required (1-6 items)" });
+      res.status(400).json({ error: "dimensions array is required (1-10 items)" });
       return;
     }
     if (!startDate || !endDate) {
@@ -390,6 +391,7 @@ analyticsRoutes.post("/analytics/cross-tactic", async (req, res, next) => {
       startDate,
       endDate,
       drillPath,
+      qbc,
     });
 
     res.json(result);
