@@ -23,9 +23,12 @@ import { config } from "../../config.js";
 import {
   getCrossTacticSchema,
   getCrossTacticAggregation,
+  getCrossTacticComparison,
+  INVERSE_MEASURES,
   getFilterValues as getCrossTacticFilterValues,
   type CrossTacticRequest,
   type DrillStep,
+  type DynamicFilter,
 } from "../../services/crossTacticService.js";
 
 export const analyticsRoutes = Router();
@@ -363,38 +366,60 @@ analyticsRoutes.get("/analytics/cross-tactic/filter-values", async (req, res, ne
   }
 });
 
+/** Parse the shared cross-tactic request body */
+function parseCrossTacticBody(body: Partial<CrossTacticRequest>) {
+  const dimensions = Array.isArray(body.dimensions) ? body.dimensions : [];
+  const metrics = Array.isArray(body.metrics) ? body.metrics : ["opps", "bids", "sold", "total_cost"];
+  const filters: Record<string, string[]> = typeof body.filters === "object" && body.filters ? body.filters : {};
+  const dynamicFilters: DynamicFilter[] = Array.isArray(body.dynamicFilters) ? body.dynamicFilters : [];
+  const startDate = typeof body.startDate === "string" ? body.startDate : "";
+  const endDate = typeof body.endDate === "string" ? body.endDate : "";
+  const drillPath: DrillStep[] = Array.isArray(body.drillPath) ? body.drillPath : [];
+  const qbc = typeof body.qbc === "number" ? body.qbc : 0;
+  const compareStartDate = typeof body.compareStartDate === "string" ? body.compareStartDate : undefined;
+  const compareEndDate = typeof body.compareEndDate === "string" ? body.compareEndDate : undefined;
+  return { dimensions, metrics, filters, dynamicFilters, startDate, endDate, drillPath, qbc, compareStartDate, compareEndDate };
+}
+
 analyticsRoutes.post("/analytics/cross-tactic", async (req, res, next) => {
   try {
-    const body = req.body as Partial<CrossTacticRequest>;
+    const parsed = parseCrossTacticBody(req.body as Partial<CrossTacticRequest>);
 
-    const dimensions = Array.isArray(body.dimensions) ? body.dimensions : [];
-    const metrics = Array.isArray(body.metrics) ? body.metrics : ["opps", "bids", "sold", "total_cost"];
-    const filters: Record<string, string[]> = typeof body.filters === "object" && body.filters ? body.filters : {};
-    const startDate = typeof body.startDate === "string" ? body.startDate : "";
-    const endDate = typeof body.endDate === "string" ? body.endDate : "";
-    const drillPath: DrillStep[] = Array.isArray(body.drillPath) ? body.drillPath : [];
-    const qbc = typeof body.qbc === "number" ? body.qbc : 0;
-
-    if (!dimensions.length) {
+    if (!parsed.dimensions.length) {
       res.status(400).json({ error: "dimensions array is required (1-10 items)" });
       return;
     }
-    if (!startDate || !endDate) {
+    if (!parsed.startDate || !parsed.endDate) {
       res.status(400).json({ error: "startDate and endDate are required" });
       return;
     }
 
-    const result = await getCrossTacticAggregation({
-      dimensions,
-      metrics,
-      filters,
-      startDate,
-      endDate,
-      drillPath,
-      qbc,
-    });
-
+    const result = await getCrossTacticAggregation(parsed);
     res.json(result);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Invalid")) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+    next(error);
+  }
+});
+
+analyticsRoutes.post("/analytics/cross-tactic/compare", async (req, res, next) => {
+  try {
+    const parsed = parseCrossTacticBody(req.body as Partial<CrossTacticRequest>);
+
+    if (!parsed.dimensions.length) {
+      res.status(400).json({ error: "dimensions array is required" });
+      return;
+    }
+    if (!parsed.startDate || !parsed.endDate || !parsed.compareStartDate || !parsed.compareEndDate) {
+      res.status(400).json({ error: "startDate, endDate, compareStartDate, and compareEndDate are required" });
+      return;
+    }
+
+    const result = await getCrossTacticComparison(parsed);
+    res.json({ ...result, inverseMeasures: [...INVERSE_MEASURES] });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("Invalid")) {
       res.status(400).json({ error: error.message });

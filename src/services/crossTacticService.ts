@@ -57,14 +57,24 @@ export type DrillStep = {
   value: string;
 };
 
+export type DynamicFilter = {
+  column: string;
+  operator: string;
+  value: string | number | (string | number)[];
+};
+
 export type CrossTacticRequest = {
   dimensions: string[];
   metrics: string[];
   filters: Record<string, string[]>;
+  dynamicFilters?: DynamicFilter[];
   startDate: string;
   endDate: string;
   drillPath: DrillStep[];
-  qbc?: number; // for ROE/COR
+  qbc?: number;
+  // Compare mode
+  compareStartDate?: string;
+  compareEndDate?: string;
 };
 
 export type CrossTacticResult = {
@@ -414,6 +424,7 @@ export async function getCrossTacticAggregation(
     dimensions: req.dimensions,
     metrics: req.metrics,
     filters: JSON.stringify(req.filters),
+    dynamicFilters: JSON.stringify(req.dynamicFilters ?? []),
     startDate: req.startDate,
     endDate: req.endDate,
     drillPath: JSON.stringify(req.drillPath),
@@ -553,6 +564,34 @@ function buildAggregationSql(
     }
   }
 
+  // Dynamic filters (column + operator + value)
+  const ALLOWED_OPERATORS = new Set(["=", "!=", ">", "<", ">=", "<=", "BETWEEN", "LIKE", "IN"]);
+  for (const f of req.dynamicFilters ?? []) {
+    if (!ALLOWED_OPERATORS.has(f.operator)) continue;
+    const colRef = `\`${f.column}\``;
+
+    if (f.operator === "BETWEEN" && Array.isArray(f.value) && f.value.length === 2) {
+      const k1 = `dp${paramIdx++}`;
+      const k2 = `dp${paramIdx++}`;
+      params[k1] = f.value[0];
+      params[k2] = f.value[1];
+      conditions.push(`${colRef} BETWEEN @${k1} AND @${k2}`);
+    } else if (f.operator === "IN") {
+      const vals = Array.isArray(f.value) ? f.value : String(f.value).split(",").map((s) => s.trim());
+      const key = `dp${paramIdx++}`;
+      params[key] = vals;
+      conditions.push(`${colRef} IN UNNEST(@${key})`);
+    } else if (f.operator === "LIKE") {
+      const key = `dp${paramIdx++}`;
+      params[key] = `%${f.value}%`;
+      conditions.push(`${colRef} LIKE @${key}`);
+    } else {
+      const key = `dp${paramIdx++}`;
+      params[key] = f.value;
+      conditions.push(`${colRef} ${f.operator} @${key}`);
+    }
+  }
+
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
   // ORDER BY: first non-hidden BQ measure, descending
@@ -566,4 +605,125 @@ ORDER BY \`${orderByMeasure}\` DESC
 LIMIT ${MAX_RESULT_ROWS}`;
 
   return { sql, params };
+}
+
+// ── Measures where lower = better (for color coding) ─────────────────
+
+export const INVERSE_MEASURES = new Set([
+  "cpc", "avg_bid", "total_cost", "cpb", "cor", "avg_lifetime_cost",
+]);
+
+// ── Compare Mode ─────────────────────────────────────────────────────
+
+export async function getCrossTacticComparison(
+  req: CrossTacticRequest
+): Promise<CrossTacticResult> {
+  if (!req.compareStartDate || !req.compareEndDate) {
+    throw new Error("compareStartDate and compareEndDate are required for comparison");
+  }
+
+  // Validate same as aggregation
+  if (!req.dimensions.length || req.dimensions.length > MAX_DIMENSIONS) {
+    throw new Error(`dimensions must have 1-${MAX_DIMENSIONS} items`);
+  }
+  for (const d of req.dimensions) {
+    if (!VALID_DIMENSIONS.has(d)) throw new Error(`Invalid dimension: ${d}`);
+  }
+  for (const m of req.metrics) {
+    if (!VALID_ALL_MEASURES.has(m)) throw new Error(`Invalid metric: ${m}`);
+  }
+  if (!req.startDate || !req.endDate) throw new Error("startDate and endDate are required");
+
+  const neededBqMeasures = resolveNeededBqMeasures(req.metrics);
+
+  // Build main + compare requests
+  const mainReq = { ...req };
+  const compareReq = { ...req, startDate: req.compareStartDate!, endDate: req.compareEndDate! };
+
+  // Cache keys
+  const mainCacheKey = buildCacheKey("cross-tactic", {
+    dimensions: req.dimensions, metrics: req.metrics,
+    filters: JSON.stringify(req.filters), dynamicFilters: JSON.stringify(req.dynamicFilters ?? []),
+    startDate: req.startDate, endDate: req.endDate,
+    drillPath: JSON.stringify(req.drillPath),
+  });
+  const compareCacheKey = buildCacheKey("cross-tactic", {
+    dimensions: req.dimensions, metrics: req.metrics,
+    filters: JSON.stringify(req.filters), dynamicFilters: JSON.stringify(req.dynamicFilters ?? []),
+    startDate: req.compareStartDate!, endDate: req.compareEndDate!,
+    drillPath: JSON.stringify(req.drillPath),
+  });
+
+  // Run both in parallel
+  const [mainRows, compareRows] = await Promise.all([
+    cached<Record<string, unknown>[]>(mainCacheKey, async () => {
+      const { sql, params } = buildAggregationSql(mainReq, neededBqMeasures);
+      return bqQuery<Record<string, unknown>>(sql, params);
+    }, CACHE_TTL),
+    cached<Record<string, unknown>[]>(compareCacheKey, async () => {
+      const { sql, params } = buildAggregationSql(compareReq, neededBqMeasures);
+      return bqQuery<Record<string, unknown>>(sql, params);
+    }, CACHE_TTL),
+  ]);
+
+  // Build lookup for compare rows by dimension key
+  const dimCols = req.dimensions;
+  const dimKey = (row: Record<string, unknown>) => dimCols.map((d) => String(row[d] ?? "")).join("|");
+  const compareMap = new Map<string, Record<string, unknown>>();
+  for (const row of compareRows) {
+    compareMap.set(dimKey(row), row);
+  }
+
+  // Compute derived + diffs
+  const qbc = req.qbc ?? 0;
+  const selectedDerived = req.metrics.filter((m) => VALID_DERIVED_MEASURES.has(m));
+
+  const resultRows = mainRows.map((mainRow) => {
+    const row = { ...mainRow };
+    const compareRow = compareMap.get(dimKey(mainRow));
+
+    // Compute derived measures on main
+    const numRow = row as Record<string, number>;
+    for (const key of selectedDerived) {
+      const def = DERIVED_MEASURES[key];
+      row[key] = def.compute(numRow, qbc);
+    }
+
+    // Compute derived on compare
+    const compareVals: Record<string, number | null> = {};
+    if (compareRow) {
+      const numCompare = { ...compareRow } as Record<string, number>;
+      for (const key of selectedDerived) {
+        const def = DERIVED_MEASURES[key];
+        compareVals[key] = def.compute(numCompare, qbc);
+      }
+    }
+
+    // Add compare + diff for each visible metric
+    for (const mKey of req.metrics) {
+      const mainVal = Number(row[mKey] ?? 0);
+      let compareVal: number;
+
+      if (VALID_DERIVED_MEASURES.has(mKey)) {
+        compareVal = Number(compareVals[mKey] ?? 0);
+      } else {
+        compareVal = compareRow ? Number(compareRow[mKey] ?? 0) : 0;
+      }
+
+      row[`${mKey}_compare`] = compareVal;
+      row[`${mKey}_diff`] = mainVal - compareVal;
+      row[`${mKey}_diff_pct`] = compareVal !== 0 ? (mainVal - compareVal) / compareVal : null;
+    }
+
+    return row;
+  });
+
+  return {
+    rows: resultRows,
+    metadata: {
+      rowCount: resultRows.length,
+      dimensions: req.dimensions,
+      metrics: req.metrics,
+    },
+  };
 }
