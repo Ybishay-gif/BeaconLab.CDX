@@ -343,3 +343,14 @@ CREATE TABLE IF NOT EXISTS sftp_uploads (
 );
 CREATE INDEX idx_sftp_uploads_report ON sftp_uploads(report_id);
 CREATE INDEX idx_sftp_uploads_status ON sftp_uploads(status);
+
+-- ── Column Presets (reusable column sets for reports/exports) ─────
+CREATE TABLE IF NOT EXISTS column_presets (
+  preset_id   TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  preset_name TEXT NOT NULL,
+  user_id     TEXT NOT NULL,
+  columns     JSONB NOT NULL DEFAULT '[]',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_column_presets_user ON column_presets(user_id, created_at DESC);

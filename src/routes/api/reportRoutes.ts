@@ -14,6 +14,13 @@ import {
   createTemplate,
   deleteTemplate,
 } from "../../services/reportService.js";
+import {
+  listPresets,
+  getPreset,
+  createPreset,
+  updatePreset,
+  deletePreset,
+} from "../../services/columnPresetService.js";
 
 const createReportSchema = z.object({
   reportName: z.string().min(1).max(200),
@@ -108,6 +115,93 @@ reportRoutes.delete("/reports/templates/:templateId", async (req, res, next) => 
       return res.status(403).json({ error: "Not authorized" });
     }
     await deleteTemplate(req.params.templateId);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ── Column Preset schema ──────────────────────────────────────────
+
+const createPresetSchema = z.object({
+  presetName: z.string().min(1).max(200),
+  columns: z
+    .array(
+      z.object({
+        column_name: z.string().min(1),
+        display_name: z.string().min(1),
+      })
+    )
+    .min(1),
+});
+
+const updatePresetSchema = z.object({
+  presetName: z.string().min(1).max(200).optional(),
+  columns: z
+    .array(
+      z.object({
+        column_name: z.string().min(1),
+        display_name: z.string().min(1),
+      })
+    )
+    .min(1)
+    .optional(),
+});
+
+// ── Column Preset routes (must be ABOVE :id routes) ──────────────
+
+reportRoutes.get("/reports/column-presets", async (req, res, next) => {
+  try {
+    const presets = await listPresets(req.user!.userId);
+    res.json({ presets });
+  } catch (error) {
+    next(error);
+  }
+});
+
+reportRoutes.get("/reports/column-presets/:presetId", async (req, res, next) => {
+  try {
+    const preset = await getPreset(req.params.presetId);
+    if (!preset) return res.status(404).json({ error: "Preset not found" });
+    res.json({ preset });
+  } catch (error) {
+    next(error);
+  }
+});
+
+reportRoutes.post("/reports/column-presets", async (req, res, next) => {
+  try {
+    const parsed = createPresetSchema.parse(req.body);
+    const result = await createPreset(req.user!.userId, parsed);
+    res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+reportRoutes.put("/reports/column-presets/:presetId", async (req, res, next) => {
+  try {
+    const parsed = updatePresetSchema.parse(req.body);
+    const preset = await getPreset(req.params.presetId);
+    if (!preset) return res.status(404).json({ error: "Preset not found" });
+    if (preset.user_id !== req.user!.userId && req.user!.role !== "admin") {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+    await updatePreset(req.params.presetId, parsed);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+reportRoutes.delete("/reports/column-presets/:presetId", async (req, res, next) => {
+  try {
+    const preset = await getPreset(req.params.presetId);
+    if (!preset) return res.status(404).json({ error: "Preset not found" });
+    if (preset.user_id !== req.user!.userId && req.user!.role !== "admin") {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+    await deletePreset(req.params.presetId);
     res.json({ ok: true });
   } catch (error) {
     next(error);
