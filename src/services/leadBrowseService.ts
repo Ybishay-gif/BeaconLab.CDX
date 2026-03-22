@@ -273,7 +273,9 @@ export async function getRelatedLeads(leadId: string): Promise<RelatedLeadRow[]>
   if (keyRows.length === 0) return [];
 
   const src = keyRows[0];
-  const jornaya = src.JornayaLeadId ? String(src.JornayaLeadId) : "";
+  const jornayaRaw = src.JornayaLeadId ? String(src.JornayaLeadId) : "";
+  // Filter out dummy Jornaya IDs (all zeros, e.g. "0000000000", "00000000-0000-...")
+  const jornaya = /^0[\-0]*$/.test(jornayaRaw) ? "" : jornayaRaw;
   const phone = src.Data_Sha256Phone ? String(src.Data_Sha256Phone) : "";
   const email = src.Sha256Email ? String(src.Sha256Email) : "";
   const soldClick = src.SoldClickKey ? String(src.SoldClickKey) : "";
