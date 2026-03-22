@@ -423,6 +423,7 @@ export async function searchLeads(
   identifierValue: string,
   filters?: { account_name?: string; segment?: string },
 ): Promise<{ total: number; rows: LeadSearchResult[] }> {
+  const cleanValue = identifierValue.trim();
   const idCol = resolveIdentifierColumn(identifierType);
   const { clause, params } = buildWhere(idCol, filters);
 
@@ -437,10 +438,41 @@ export async function searchLeads(
     LIMIT 100
   `;
 
-  const results = await bqQuery<LeadSearchResult>(sql, {
-    identifier_value: identifierValue,
+  console.log(`[lead-lookup] searchLeads: type=${identifierType} table=main`);
+  let results = await bqQuery<LeadSearchResult>(sql, {
+    identifier_value: cleanValue,
     ...params,
   });
+
+  // Fallback: try "with opps" table if main table returned nothing
+  if (results.length === 0 && config.rawCrossTacticWithOppsTable) {
+    console.log(`[lead-lookup] searchLeads: 0 results in main table, trying opps table for ${identifierType}="${cleanValue}"`);
+    try {
+      const oppsSql = `
+        SELECT
+          Lead_LeadID, Company_name AS Account_Name, Segments,
+          CAST(Data_DateCreated AS STRING) AS Data_DateCreated,
+          Data_State, Attribution_Channel, LeadType, Transaction_sold
+        FROM ${config.rawCrossTacticWithOppsTable}
+        WHERE ${clause}
+        ORDER BY Data_DateCreated DESC
+        LIMIT 100
+      `;
+      results = await bqQuery<LeadSearchResult>(oppsSql, {
+        identifier_value: cleanValue,
+        ...params,
+      });
+      if (results.length > 0) {
+        console.log(`[lead-lookup] searchLeads: found ${results.length} rows in opps table`);
+      }
+    } catch (err) {
+      console.warn(`[lead-lookup] searchLeads: opps table fallback failed:`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  if (results.length === 0) {
+    console.warn(`[lead-lookup] searchLeads: 0 results for ${identifierType}="${cleanValue}" in both tables`);
+  }
 
   return { total: results.length, rows: results };
 }
@@ -464,6 +496,7 @@ export async function getLeadDetails(
   filters?: { account_name?: string; segment?: string },
   rowSelection: RowSelection = "all",
 ): Promise<{ totalRows: number; sections: LeadDetailResult[] }> {
+  const cleanValue = identifierValue.trim();
   const idCol = resolveIdentifierColumn(identifierType);
   const sections = resolveSections(sectionKeys);
   const { clause, params } = buildWhere(idCol, filters);
@@ -488,10 +521,23 @@ export async function getLeadDetails(
     ${limitClause}
   `;
 
-  const rawRows = await bqQuery<Record<string, unknown>>(sql, {
-    identifier_value: identifierValue,
-    ...params,
-  });
+  const queryParams = { identifier_value: cleanValue, ...params };
+  let rawRows = await bqQuery<Record<string, unknown>>(sql, queryParams);
+
+  // Fallback: try "with opps" table if main table returned nothing
+  if (rawRows.length === 0 && config.rawCrossTacticWithOppsTable) {
+    console.log(`[lead-lookup] getLeadDetails: 0 results in main table, trying opps table`);
+    try {
+      const oppsSql = sql.replace(config.rawCrossTacticTable, config.rawCrossTacticWithOppsTable);
+      rawRows = await bqQuery<Record<string, unknown>>(oppsSql, queryParams);
+      if (rawRows.length > 0) {
+        console.log(`[lead-lookup] getLeadDetails: found ${rawRows.length} rows in opps table`);
+      }
+    } catch (err) {
+      // Some columns may not exist in opps table — log and return empty
+      console.warn(`[lead-lookup] getLeadDetails: opps table fallback failed:`, err instanceof Error ? err.message : err);
+    }
+  }
 
   // Group results by section for structured response
   const result: LeadDetailResult[] = [];
@@ -533,6 +579,7 @@ async function queryForExport(
   sectionKeys: string[],
   filters?: { account_name?: string; segment?: string },
 ) {
+  const cleanValue = identifierValue.trim();
   const idCol = resolveIdentifierColumn(identifierType);
   const sections = resolveSections(sectionKeys);
   const { clause, params } = buildWhere(idCol, filters);
@@ -557,10 +604,22 @@ async function queryForExport(
     LIMIT 1000
   `;
 
-  const rows = await bqQuery<Record<string, unknown>>(sql, {
-    identifier_value: identifierValue,
-    ...params,
-  });
+  const queryParams = { identifier_value: cleanValue, ...params };
+  let rows = await bqQuery<Record<string, unknown>>(sql, queryParams);
+
+  // Fallback: try "with opps" table if main table returned nothing
+  if (rows.length === 0 && config.rawCrossTacticWithOppsTable) {
+    console.log(`[lead-lookup] queryForExport: 0 results in main table, trying opps table`);
+    try {
+      const oppsSql = sql.replace(config.rawCrossTacticTable, config.rawCrossTacticWithOppsTable);
+      rows = await bqQuery<Record<string, unknown>>(oppsSql, queryParams);
+      if (rows.length > 0) {
+        console.log(`[lead-lookup] queryForExport: found ${rows.length} rows in opps table`);
+      }
+    } catch (err) {
+      console.warn(`[lead-lookup] queryForExport: opps table fallback failed:`, err instanceof Error ? err.message : err);
+    }
+  }
 
   return { rows, allColumns, sectionColMap };
 }
