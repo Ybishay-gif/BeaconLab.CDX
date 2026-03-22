@@ -80,7 +80,8 @@ const createTemplateSchema = z.object({
 
 reportRoutes.get("/reports/templates", async (req, res, next) => {
   try {
-    const templates = await listTemplates(req.user!.userId);
+    const isAdmin = req.user!.role === "admin";
+    const templates = await listTemplates(req.user!.userId, isAdmin);
     res.json({ templates });
   } catch (error) {
     next(error);
@@ -152,7 +153,8 @@ const updatePresetSchema = z.object({
 
 reportRoutes.get("/reports/column-presets", async (req, res, next) => {
   try {
-    const presets = await listPresets(req.user!.userId);
+    const isAdmin = req.user!.role === "admin";
+    const presets = await listPresets(req.user!.userId, isAdmin);
     res.json({ presets });
   } catch (error) {
     next(error);
@@ -265,10 +267,11 @@ reportRoutes.post("/reports/check", async (req, res, next) => {
   }
 });
 
-// List reports
+// List reports (admins see all reports)
 reportRoutes.get("/reports", async (req, res, next) => {
   try {
-    const reports = await listReports(req.user!.userId);
+    const isAdmin = req.user!.role === "admin";
+    const reports = await listReports(req.user!.userId, isAdmin);
     res.json({ reports });
   } catch (error) {
     next(error);

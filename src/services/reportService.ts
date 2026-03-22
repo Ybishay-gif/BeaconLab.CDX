@@ -102,7 +102,8 @@ export async function getFilterValues(columnName: string, includeOpps = false): 
 
 // ── CRUD ───────────────────────────────────────────────────────────
 
-export async function listReports(userId: string): Promise<ReportRow[]> {
+export async function listReports(userId: string, isAdmin = false): Promise<ReportRow[]> {
+  const whereClause = isAdmin ? "" : "WHERE user_id = @userId";
   return query<ReportRow>(
     `SELECT report_id, report_name, status, row_count,
             fixed_filters::text AS fixed_filters,
@@ -116,7 +117,7 @@ export async function listReports(userId: string): Promise<ReportRow[]> {
             updated_at::text AS updated_at,
             completed_at::text AS completed_at
      FROM ${table("reports")}
-     WHERE user_id = @userId
+     ${whereClause}
      ORDER BY created_at DESC
      LIMIT 100`,
     { userId }
@@ -240,7 +241,8 @@ export type CreateTemplateInput = {
   includeOpps?: boolean;
 };
 
-export async function listTemplates(userId: string): Promise<ReportTemplate[]> {
+export async function listTemplates(userId: string, isAdmin = false): Promise<ReportTemplate[]> {
+  const whereClause = isAdmin ? "" : "WHERE user_id = @userId";
   return query<ReportTemplate>(
     `SELECT template_id, user_id, template_name,
             fixed_filters::text AS fixed_filters,
@@ -249,7 +251,7 @@ export async function listTemplates(userId: string): Promise<ReportTemplate[]> {
             COALESCE(include_opps, false) AS include_opps,
             created_at::text AS created_at
      FROM ${table("report_templates")}
-     WHERE user_id = @userId
+     ${whereClause}
      ORDER BY created_at DESC`,
     { userId }
   );

@@ -25,14 +25,15 @@ export type UpdatePresetInput = Partial<CreatePresetInput>;
 
 // ── CRUD ───────────────────────────────────────────────────────────
 
-export async function listPresets(userId: string): Promise<ColumnPresetRow[]> {
+export async function listPresets(userId: string, isAdmin = false): Promise<ColumnPresetRow[]> {
+  const whereClause = isAdmin ? "" : "WHERE user_id = @userId";
   return query<ColumnPresetRow>(
     `SELECT preset_id, preset_name, user_id,
             columns::text AS columns,
             created_at::text AS created_at,
             updated_at::text AS updated_at
      FROM ${table("column_presets")}
-     WHERE user_id = @userId
+     ${whereClause}
      ORDER BY created_at DESC
      LIMIT 50`,
     { userId }
