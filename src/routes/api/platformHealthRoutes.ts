@@ -5,18 +5,16 @@ import {
   getSecurityTestById,
 } from "../../services/platformHealthService.js";
 import { generateSecurityReportPdf } from "../../services/securityReportPdf.js";
+import { requirePermission } from "../../middleware/auth.js";
 
 export const platformHealthRoutes = Router();
 
+const requirePlatformHealth = requirePermission("platform_health:view");
+
 // ── Sync History ─────────────────────────────────────────────────────
 
-platformHealthRoutes.get("/platform-health/sync-history", async (req, res) => {
+platformHealthRoutes.get("/platform-health/sync-history", requirePlatformHealth, async (req, res) => {
   try {
-    // Admin-only: check role (requireUser already ran via plansRouter middleware)
-    if (req.user?.role !== "admin") {
-      res.status(403).json({ error: "Admin access required" });
-      return;
-    }
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const offset = Number(req.query.offset) || 0;
     const result = await listSyncHistory(limit, offset);
@@ -28,12 +26,8 @@ platformHealthRoutes.get("/platform-health/sync-history", async (req, res) => {
 
 // ── Security Tests ───────────────────────────────────────────────────
 
-platformHealthRoutes.get("/platform-health/security-tests", async (req, res) => {
+platformHealthRoutes.get("/platform-health/security-tests", requirePlatformHealth, async (req, res) => {
   try {
-    if (req.user?.role !== "admin") {
-      res.status(403).json({ error: "Admin access required" });
-      return;
-    }
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const offset = Number(req.query.offset) || 0;
     const result = await listSecurityTests(limit, offset);
@@ -45,12 +39,8 @@ platformHealthRoutes.get("/platform-health/security-tests", async (req, res) => 
 
 // ── Security Test PDF Download ───────────────────────────────────────
 
-platformHealthRoutes.get("/platform-health/security-tests/:id/pdf", async (req, res) => {
+platformHealthRoutes.get("/platform-health/security-tests/:id/pdf", requirePlatformHealth, async (req, res) => {
   try {
-    if (req.user?.role !== "admin") {
-      res.status(403).json({ error: "Admin access required" });
-      return;
-    }
     const row = await getSecurityTestById(req.params.id);
     if (!row) {
       res.status(404).json({ error: "Security test result not found" });
