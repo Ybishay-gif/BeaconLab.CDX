@@ -164,6 +164,13 @@
             </button>
           </div>
 
+          <button class="menu-item" data-section="ask-ai" id="askAiSectionBtn">
+            <span class="menu-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            <span>Ask AI</span>
+          </button>
+
           <button class="menu-item" data-section="settings">
             <span class="menu-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none"><path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7zm8-3.5-.9-.5a7.8 7.8 0 0 0-.1-1l.8-.6-1.6-2.8-.9.3a7.8 7.8 0 0 0-.8-.7l-.1-1h-3.2l-.3.9a7.8 7.8 0 0 0-1 0l-.5-.9H8.2l-.5.9a7.8 7.8 0 0 0-1 .2l-.8-.4L4.3 9l.8.6a7.8 7.8 0 0 0-.1 1l-.9.5 1.2 3.1 1-.1a7.8 7.8 0 0 0 .7.8l-.2 1h3.2l.5-.9a7.8 7.8 0 0 0 1 0l.6.9h3.2l.1-1a7.8 7.8 0 0 0 .8-.7l.9.1L20 12z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
@@ -1023,6 +1030,29 @@
             </section>
           </div>
         </div>
+        <div class="section-content" data-section-panel="ask-ai">
+          <div id="askAiPanel" class="tab-panel active ask-ai-fullpage">
+            <div class="ask-ai-layout">
+              <aside class="ask-ai-sessions-sidebar">
+                <div class="ask-ai-sessions-header">
+                  <h3>Conversations</h3>
+                  <button id="askAiNewSessionBtn" type="button" title="New conversation">+</button>
+                </div>
+                <ul id="askAiSessionList" class="ask-ai-session-list"></ul>
+              </aside>
+              <div class="ask-ai-chat-area">
+                <div id="askAiMessages" class="ask-ai-messages"></div>
+                <div class="ask-ai-input-bar">
+                  <textarea id="askAiInput" placeholder="Ask anything about your data..." rows="1"></textarea>
+                  <button id="askAiSendBtn" type="button" title="Send">
+                    <svg viewBox="0 0 24 24" fill="none" width="20" height="20"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </section>
     </main>
     <div id="planDeleteModal" class="modal-backdrop" hidden>

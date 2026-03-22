@@ -558,7 +558,14 @@ const el = {
   settingsGlobalFiltersBody: document.getElementById("settingsGlobalFiltersBody"),
   settingsGlobalFiltersStatus: document.getElementById("settingsGlobalFiltersStatus"),
   defaultTargetsFileInput: document.getElementById("defaultTargetsFileInput"),
-  defaultTargetsFileStatus: document.getElementById("defaultTargetsFileStatus")
+  defaultTargetsFileStatus: document.getElementById("defaultTargetsFileStatus"),
+  askAiSectionBtn: document.getElementById("askAiSectionBtn"),
+  askAiPanel: document.getElementById("askAiPanel"),
+  askAiMessages: document.getElementById("askAiMessages"),
+  askAiInput: document.getElementById("askAiInput"),
+  askAiSendBtn: document.getElementById("askAiSendBtn"),
+  askAiNewSessionBtn: document.getElementById("askAiNewSessionBtn"),
+  askAiSessionList: document.getElementById("askAiSessionList"),
 };
 
 const tableEnhancers = new Map();
@@ -3464,6 +3471,9 @@ function setActiveSection(section) {
   }
   for (const panel of el.sectionPanels) {
     panel.classList.toggle("active", panel.dataset.sectionPanel === section);
+  }
+  if (section === "ask-ai") {
+    initAskAiView();
   }
 }
 
@@ -9038,6 +9048,197 @@ async function initialize() {
   }
 
   await loadAppDataAfterLogin();
+}
+
+/* ------------------------------------------------------------------ */
+/*  Ask AI — full-page chat                                            */
+/* ------------------------------------------------------------------ */
+
+const askAiState = {
+  sessionId: "",
+  sessions: [],
+  sending: false,
+  initialized: false,
+};
+
+function generateAiSessionId() {
+  return "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+}
+
+function initAskAiView() {
+  if (askAiState.initialized) return;
+  askAiState.initialized = true;
+  loadAiSessions();
+}
+
+async function loadAiSessions() {
+  try {
+    const data = await api("/api/ai-chat/sessions", { timeoutMs: 10000 });
+    askAiState.sessions = Array.isArray(data) ? data : [];
+  } catch {
+    askAiState.sessions = [];
+  }
+  renderAiSessionList();
+  if (askAiState.sessions.length > 0 && !askAiState.sessionId) {
+    selectAiSession(askAiState.sessions[0].session_id);
+  } else if (!askAiState.sessionId) {
+    startNewAiSession();
+  }
+}
+
+function renderAiSessionList() {
+  if (!el.askAiSessionList) return;
+  el.askAiSessionList.innerHTML = "";
+  for (const s of askAiState.sessions) {
+    const li = document.createElement("li");
+    li.textContent = s.title || "Untitled";
+    li.classList.toggle("active", s.session_id === askAiState.sessionId);
+    li.addEventListener("click", () => selectAiSession(s.session_id));
+    el.askAiSessionList.appendChild(li);
+  }
+}
+
+async function selectAiSession(sessionId) {
+  askAiState.sessionId = sessionId;
+  renderAiSessionList();
+  renderAiMessages([]);
+  try {
+    const data = await api(`/api/ai-chat/sessions/${encodeURIComponent(sessionId)}/messages`, { timeoutMs: 10000 });
+    const messages = Array.isArray(data) ? data : [];
+    renderAiMessages(messages);
+  } catch {
+    renderAiEmptyState("Could not load messages.");
+  }
+}
+
+function startNewAiSession() {
+  askAiState.sessionId = generateAiSessionId();
+  renderAiSessionList();
+  renderAiEmptyState("Start a conversation by typing a message below.");
+}
+
+function renderAiEmptyState(text) {
+  if (!el.askAiMessages) return;
+  el.askAiMessages.innerHTML = `<div class="ask-ai-empty">
+    <svg viewBox="0 0 24 24" fill="none"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <p>${text}</p>
+  </div>`;
+}
+
+function renderAiMessages(messages) {
+  if (!el.askAiMessages) return;
+  if (!messages.length) {
+    renderAiEmptyState("Start a conversation by typing a message below.");
+    return;
+  }
+  el.askAiMessages.innerHTML = "";
+  for (const m of messages) {
+    appendAiMessageBubble(m.role, m.content || m.message || "");
+  }
+  el.askAiMessages.scrollTop = el.askAiMessages.scrollHeight;
+}
+
+function appendAiMessageBubble(role, text) {
+  if (!el.askAiMessages) return;
+  // Clear empty state if present
+  const empty = el.askAiMessages.querySelector(".ask-ai-empty");
+  if (empty) empty.remove();
+
+  const div = document.createElement("div");
+  div.className = `ask-ai-msg ${role === "user" ? "user" : "assistant"}`;
+  div.textContent = text;
+  el.askAiMessages.appendChild(div);
+  el.askAiMessages.scrollTop = el.askAiMessages.scrollHeight;
+}
+
+function buildPlanContext() {
+  const ctx = {};
+  if (state.planContext.performanceStartDate) ctx.perfStartDate = state.planContext.performanceStartDate;
+  if (state.planContext.performanceEndDate) ctx.perfEndDate = state.planContext.performanceEndDate;
+  if (state.planContext.priceExplorationStartDate) ctx.priceStartDate = state.planContext.priceExplorationStartDate;
+  if (state.planContext.priceExplorationEndDate) ctx.priceEndDate = state.planContext.priceExplorationEndDate;
+  if (state.activityLeadType && state.activityLeadType !== "all") ctx.activityLeadType = state.activityLeadType;
+  if (state.planContext.qbcClicks > 0) ctx.qbcClicks = state.planContext.qbcClicks;
+  if (state.planContext.qbcLeadsCalls > 0) ctx.qbcLeadsCalls = state.planContext.qbcLeadsCalls;
+  const planId = el.selectedPlanId?.value?.trim();
+  if (planId) ctx.planId = planId;
+  return Object.keys(ctx).length ? ctx : undefined;
+}
+
+async function sendAiMessage() {
+  if (askAiState.sending) return;
+  const input = el.askAiInput;
+  if (!input) return;
+  const message = input.value.trim();
+  if (!message) return;
+
+  askAiState.sending = true;
+  if (el.askAiSendBtn) el.askAiSendBtn.disabled = true;
+  input.value = "";
+  input.style.height = "auto";
+
+  appendAiMessageBubble("user", message);
+
+  // Show thinking indicator
+  const thinkingDiv = document.createElement("div");
+  thinkingDiv.className = "ask-ai-msg assistant";
+  thinkingDiv.innerHTML = '<span class="ask-ai-msg-thinking">Thinking...</span>';
+  el.askAiMessages.appendChild(thinkingDiv);
+  el.askAiMessages.scrollTop = el.askAiMessages.scrollHeight;
+
+  try {
+    const body = {
+      message,
+      sessionId: askAiState.sessionId,
+      planContext: buildPlanContext(),
+    };
+    const data = await api("/api/ai-chat", {
+      method: "POST",
+      body: JSON.stringify(body),
+      timeoutMs: 60000,
+    });
+    thinkingDiv.remove();
+    appendAiMessageBubble("assistant", data.answer || data.message || "No response.");
+
+    // Refresh sessions list (new session might have been created)
+    if (!askAiState.sessions.find((s) => s.session_id === askAiState.sessionId)) {
+      await loadAiSessions();
+      // Re-select current session
+      renderAiSessionList();
+    }
+  } catch (err) {
+    thinkingDiv.remove();
+    appendAiMessageBubble("assistant", `Error: ${err.message || "Failed to get response."}`);
+  } finally {
+    askAiState.sending = false;
+    if (el.askAiSendBtn) el.askAiSendBtn.disabled = false;
+    input.focus();
+  }
+}
+
+/* Ask AI event listeners */
+if (el.askAiSendBtn) {
+  el.askAiSendBtn.addEventListener("click", sendAiMessage);
+}
+
+if (el.askAiInput) {
+  el.askAiInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendAiMessage();
+    }
+  });
+  // Auto-resize textarea
+  el.askAiInput.addEventListener("input", () => {
+    el.askAiInput.style.height = "auto";
+    el.askAiInput.style.height = Math.min(el.askAiInput.scrollHeight, 120) + "px";
+  });
+}
+
+if (el.askAiNewSessionBtn) {
+  el.askAiNewSessionBtn.addEventListener("click", () => {
+    startNewAiSession();
+  });
 }
 
 initialize();
