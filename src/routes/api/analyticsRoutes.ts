@@ -30,6 +30,12 @@ import {
   type DrillStep,
   type DynamicFilter,
 } from "../../services/crossTacticService.js";
+import {
+  listPresets,
+  createPreset,
+  deletePreset,
+  type PresetConfig,
+} from "../../services/crossTacticPresetsService.js";
 
 export const analyticsRoutes = Router();
 
@@ -376,9 +382,11 @@ function parseCrossTacticBody(body: Partial<CrossTacticRequest>) {
   const endDate = typeof body.endDate === "string" ? body.endDate : "";
   const drillPath: DrillStep[] = Array.isArray(body.drillPath) ? body.drillPath : [];
   const qbc = typeof body.qbc === "number" ? body.qbc : 0;
+  const qbcClicks = typeof body.qbcClicks === "number" ? body.qbcClicks : undefined;
+  const qbcLeadsCalls = typeof body.qbcLeadsCalls === "number" ? body.qbcLeadsCalls : undefined;
   const compareStartDate = typeof body.compareStartDate === "string" ? body.compareStartDate : undefined;
   const compareEndDate = typeof body.compareEndDate === "string" ? body.compareEndDate : undefined;
-  return { dimensions, metrics, filters, dynamicFilters, startDate, endDate, drillPath, qbc, compareStartDate, compareEndDate };
+  return { dimensions, metrics, filters, dynamicFilters, startDate, endDate, drillPath, qbc, qbcClicks, qbcLeadsCalls, compareStartDate, compareEndDate };
 }
 
 analyticsRoutes.post("/analytics/cross-tactic", async (req, res, next) => {
@@ -427,4 +435,33 @@ analyticsRoutes.post("/analytics/cross-tactic/compare", async (req, res, next) =
     }
     next(error);
   }
+});
+
+// ── Presets ──
+
+analyticsRoutes.get("/analytics/cross-tactic/presets", async (req, res, next) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+    const presets = await listPresets(userId);
+    res.json({ presets });
+  } catch (error) { next(error); }
+});
+
+analyticsRoutes.post("/analytics/cross-tactic/presets", async (req, res, next) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+    const { presetName, config } = req.body as { presetName: string; config: PresetConfig };
+    if (!presetName || !config) { res.status(400).json({ error: "presetName and config are required" }); return; }
+    const result = await createPreset(userId, presetName, config);
+    res.json(result);
+  } catch (error) { next(error); }
+});
+
+analyticsRoutes.delete("/analytics/cross-tactic/presets/:id", async (req, res, next) => {
+  try {
+    await deletePreset(req.params.id);
+    res.json({ ok: true });
+  } catch (error) { next(error); }
 });

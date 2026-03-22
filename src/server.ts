@@ -645,6 +645,19 @@ async function runMigrations() {
     await pgExec("CREATE INDEX IF NOT EXISTS idx_sftp_uploads_report ON sftp_uploads(report_id)");
     await pgExec("CREATE INDEX IF NOT EXISTS idx_sftp_uploads_status ON sftp_uploads(status)");
 
+    // Cross Tactic Explorer presets
+    await pgExec(`
+      CREATE TABLE IF NOT EXISTS cross_tactic_presets (
+        preset_id   TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        user_id     TEXT NOT NULL,
+        preset_name TEXT NOT NULL,
+        config      JSONB NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await pgExec("CREATE INDEX IF NOT EXISTS idx_cross_tactic_presets_user ON cross_tactic_presets(user_id, created_at DESC)");
+
     console.log("Migrations OK");
   } catch (err) {
     console.warn("Migration warning (non-fatal):", err);
