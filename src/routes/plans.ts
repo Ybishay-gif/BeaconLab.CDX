@@ -20,6 +20,7 @@ import { leadRoutes } from "./api/leadRoutes.js";
 import { techCostRoutes } from "./api/techCostRoutes.js";
 import { budgetRoutes } from "./api/budgetRoutes.js";
 import { telegramRoutes } from "./api/telegramRoutes.js";
+import { dataCompareRoutes } from "./api/dataCompareRoutes.js";
 
 export const plansRouter = Router();
 
@@ -49,3 +50,4 @@ plansRouter.use(adLeverRoutes);
 plansRouter.use(leadRoutes);
 plansRouter.use(techCostRoutes);
 plansRouter.use(budgetRoutes);
+plansRouter.use(dataCompareRoutes);
