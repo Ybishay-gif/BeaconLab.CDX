@@ -63,7 +63,55 @@ const upsertAllocationsSchema = z.object({
     ),
 });
 
+const bulkUpsertSchema = z.object({
+  year: z.number().int().min(2020).max(2100),
+  budgets: z.array(
+    z.object({
+      month: z.number().int().min(1).max(12),
+      activityType: z.enum(["clicks", "leads", "calls"]),
+      leadType: z.enum(["auto", "home"]),
+      amount: z.number().nonnegative(),
+    })
+  ),
+});
+
 // ── Endpoints ────────────────────────────────────────────────────────
+
+// Bulk upsert budgets (for import)
+budgetRoutes.put(
+  "/budgets/bulk",
+  requirePermission("budgets:edit"),
+  timedRoute("bulk_upsert_budgets", async (req, res, next) => {
+    try {
+      const parsed = bulkUpsertSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues });
+        return;
+      }
+      const { year, budgets: entries } = parsed.data;
+      const user = (req as any).user;
+      let count = 0;
+      for (const entry of entries) {
+        await upsertBudget(year, entry.month, entry.activityType, entry.leadType, entry.amount, user.userId);
+        count++;
+      }
+
+      await appendChangeLog(
+        { userId: user.userId, email: user.email },
+        {
+          objectType: "budget",
+          action: "bulk_upsert",
+          after: { year, count },
+          module: "cross_tactic",
+        }
+      );
+
+      res.json({ ok: true, count });
+    } catch (error) {
+      next(error);
+    }
+  })
+);
 
 // List budgets for a year
 budgetRoutes.get(
