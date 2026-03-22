@@ -15,6 +15,7 @@ export interface ModuleDefinition {
 
 export const MODULE_REGISTRY: ModuleDefinition[] = [
   { id: "planning", label: "Planning", defaultRoute: "/plan/builder" },
+  { id: "cross_tactic", label: "Cross Tactic", defaultRoute: "/cross-tactic/budgets" },
   { id: "channel_recommendations", label: "Channel Recommendations", defaultRoute: "/channel-rec" },
 ];
 

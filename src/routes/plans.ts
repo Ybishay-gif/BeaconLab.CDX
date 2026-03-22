@@ -17,6 +17,8 @@ import { sftpRoutes } from "./api/sftpRoutes.js";
 import { rolesRoutes } from "./api/rolesRoutes.js";
 import { adLeverRoutes } from "./api/adLeverRoutes.js";
 import { leadRoutes } from "./api/leadRoutes.js";
+import { techCostRoutes } from "./api/techCostRoutes.js";
+import { budgetRoutes } from "./api/budgetRoutes.js";
 import { telegramRoutes } from "./api/telegramRoutes.js";
 
 export const plansRouter = Router();
@@ -45,3 +47,5 @@ plansRouter.use(sftpRoutes);
 plansRouter.use(rolesRoutes);
 plansRouter.use(adLeverRoutes);
 plansRouter.use(leadRoutes);
+plansRouter.use(techCostRoutes);
+plansRouter.use(budgetRoutes);

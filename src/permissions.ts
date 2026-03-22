@@ -29,6 +29,10 @@ export const ALL_PERMISSIONS = [
   "ad_group_levers:view",
   "ad_group_levers:edit",
 
+  // Cross Tactic
+  "budgets:view",
+  "budgets:edit",
+
   // General
   "ai_chat:view",
 
@@ -93,6 +97,13 @@ export const PERMISSION_GROUPS: Record<string, { label: string; permissions: str
       "ad_group_levers:edit",
     ],
   },
+  cross_tactic: {
+    label: "Cross Tactic",
+    permissions: [
+      "budgets:view",
+      "budgets:edit",
+    ],
+  },
   general: {
     label: "General",
     permissions: [
@@ -123,6 +134,9 @@ export const PERMISSION_GROUPS: Record<string, { label: string; permissions: str
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
   Admin: [...ALL_PERMISSIONS],
   Planner: [
+    // Cross Tactic
+    "budgets:view",
+    "budgets:edit",
     // Plan — full access
     "plan_builder:view",
     "plan_builder:edit",
@@ -158,6 +172,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "audit_log:view",
   ],
   Viewer: [
+    "budgets:view",
     "plan_builder:view",
     "targets:view",
     "plan_strategy:view",

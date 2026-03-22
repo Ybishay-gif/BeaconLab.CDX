@@ -354,3 +354,44 @@ CREATE TABLE IF NOT EXISTS column_presets (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_column_presets_user ON column_presets(user_id, created_at DESC);
+
+-- ── Tech Vendors (cost management vendor pricing config) ─────
+CREATE TABLE IF NOT EXISTS tech_vendors (
+  vendor_id      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  vendor_name    TEXT NOT NULL,
+  pricing_model  TEXT NOT NULL,
+  pricing_value  DOUBLE PRECISION NOT NULL,
+  pricing_column TEXT,
+  is_active      BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by     TEXT NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ── Budget Management ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS budgets (
+  budget_id      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  year           INTEGER NOT NULL,
+  month          INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
+  activity_type  TEXT NOT NULL,
+  lead_type      TEXT NOT NULL,
+  amount         DOUBLE PRECISION NOT NULL DEFAULT 0,
+  created_by     TEXT NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by     TEXT NOT NULL,
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (year, month, activity_type, lead_type)
+);
+CREATE INDEX idx_budgets_period ON budgets(year, month);
+
+CREATE TABLE IF NOT EXISTS budget_allocations (
+  allocation_id   TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  budget_id       TEXT NOT NULL REFERENCES budgets(budget_id) ON DELETE CASCADE,
+  account_name    TEXT NOT NULL,
+  allocation_pct  DOUBLE PRECISION NOT NULL DEFAULT 0
+                    CHECK (allocation_pct >= 0 AND allocation_pct <= 100),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (budget_id, account_name)
+);
+CREATE INDEX idx_alloc_budget ON budget_allocations(budget_id);
