@@ -14,15 +14,36 @@ export interface ModuleDefinition {
 }
 
 export const MODULE_REGISTRY: ModuleDefinition[] = [
-  { id: "planning", label: "Planning", defaultRoute: "/plan/builder" },
-  { id: "cross_tactic", label: "Cross Tactic", defaultRoute: "/cross-tactic/budgets" },
-  { id: "channel_recommendations", label: "Channel Recommendations", defaultRoute: "/channel-rec" },
+  { id: "beacon_lite_tactic", label: "Beacon Lite - Tactic", defaultRoute: "/analytics/state-channel-performance" },
+  { id: "beacon_lite_cross_tactic", label: "Beacon Lite - Cross Tactic", defaultRoute: "/analytics/cross-tactic" },
+  { id: "lm_tools", label: "LM Tools", defaultRoute: "/plan/builder" },
+  { id: "kissterra_tools", label: "Kissterra Tools", defaultRoute: "/settings/default-targets" },
 ];
+
+/** Maps old module IDs to the new IDs they expand into (backward compatibility) */
+export const MODULE_ALIASES: Record<string, string[]> = {
+  planning: ["lm_tools", "beacon_lite_tactic", "beacon_lite_cross_tactic", "kissterra_tools"],
+  cross_tactic: ["beacon_lite_cross_tactic"],
+  channel_recommendations: ["lm_tools"],
+};
 
 export const VALID_MODULE_IDS = MODULE_REGISTRY.map((m) => m.id);
 
 export function isValidModuleId(id: string): boolean {
-  return VALID_MODULE_IDS.includes(id);
+  return VALID_MODULE_IDS.includes(id) || id in MODULE_ALIASES;
+}
+
+/** Expand a list of module IDs, resolving any old aliases to their new equivalents */
+export function expandModuleAliases(moduleIds: string[]): string[] {
+  const expanded = new Set<string>();
+  for (const id of moduleIds) {
+    if (id in MODULE_ALIASES) {
+      for (const newId of MODULE_ALIASES[id]) expanded.add(newId);
+    }
+    // Keep the ID if it's a valid new module (ignore pure legacy IDs)
+    if (VALID_MODULE_IDS.includes(id)) expanded.add(id);
+  }
+  return [...expanded];
 }
 
 /** Fetch dynamic modules from DB and merge with static registry */

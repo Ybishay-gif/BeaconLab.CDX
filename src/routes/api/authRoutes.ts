@@ -45,7 +45,7 @@ authRoutes.post("/auth/admin-login", loginLimiter, async (req, res, next) => {
     const parsed = adminLoginSchema.parse(req.body);
     const session = await loginAdminWithCode(parsed.code);
     // Admin gets access to all modules
-    res.json({ ...session, user: { ...session.user, modules: VALID_MODULE_IDS } });
+    res.json({ ...session, user: { ...session.user, modules: [...VALID_MODULE_IDS] } });
   } catch (error) {
     next(error);
   }

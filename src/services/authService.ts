@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { config } from "../config.js";
 import { query, table } from "../db/index.js";
-import { VALID_MODULE_IDS, isValidModuleId } from "../modules.js";
+import { VALID_MODULE_IDS, isValidModuleId, expandModuleAliases } from "../modules.js";
 import { getRolePermissions, getRoleByName } from "./roleService.js";
 import { ALL_PERMISSIONS_LIST } from "../permissions.js";
 
@@ -546,7 +546,9 @@ export async function getUserModules(userId: string): Promise<string[]> {
     `SELECT module_id FROM ${table("user_modules")} WHERE user_id = @userId`,
     { userId }
   );
-  return rows.map((r) => r.module_id);
+  const rawIds = rows.map((r) => r.module_id);
+  // Expand legacy module aliases to new IDs for backward compatibility
+  return expandModuleAliases(rawIds);
 }
 
 export async function setUserModules(userId: string, modules: string[]): Promise<void> {
@@ -596,7 +598,7 @@ export async function listManagedUsers(): Promise<ManagedUserRow[]> {
         ORDER BY LOWER(u.email)
       `
     );
-    return rows.map((r) => ({ ...r, modules: r.modules ?? [] }));
+    return rows.map((r) => ({ ...r, modules: expandModuleAliases(r.modules ?? []) }));
   }
 
   // BQ fallback: no module table, grant all modules
@@ -616,7 +618,7 @@ export async function listManagedUsers(): Promise<ManagedUserRow[]> {
       ORDER BY LOWER(u.email)
     `
   );
-  return rows.map((r) => ({ ...r, role_id: null, role_name: null, modules: VALID_MODULE_IDS }));
+  return rows.map((r) => ({ ...r, role_id: null, role_name: null, modules: [...VALID_MODULE_IDS] }));
 }
 
 export async function addManagedUser(
@@ -711,12 +713,15 @@ export async function addManagedUser(
     );
   }
 
-  // Grant default module access (planning)
+  // Grant default module access (LM Tools + both Beacon Lite modules)
   if (config.usePg) {
-    await query(
-      `INSERT INTO ${table("user_modules")} (user_id, module_id) VALUES (@userId, 'planning') ON CONFLICT DO NOTHING`,
-      { userId }
-    );
+    const defaultModules = ["lm_tools", "beacon_lite_tactic", "beacon_lite_cross_tactic"];
+    for (const moduleId of defaultModules) {
+      await query(
+        `INSERT INTO ${table("user_modules")} (user_id, module_id) VALUES (@userId, @moduleId) ON CONFLICT DO NOTHING`,
+        { userId, moduleId }
+      );
+    }
   }
 
   return { userId, email: normalizedEmail };

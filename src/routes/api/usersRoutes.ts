@@ -57,8 +57,8 @@ usersRoutes.post("/users", requirePermission("user_management:edit"), async (req
       role: parsed.role,
       roleId: parsed.roleId,
     });
-    // Set module access if provided (otherwise addManagedUser defaults to 'planning')
-    const modules = parsed.modules && parsed.modules.length > 0 ? parsed.modules : ["planning"];
+    // Set module access if provided (otherwise addManagedUser defaults to lm_tools + beacon lite modules)
+    const modules = parsed.modules && parsed.modules.length > 0 ? parsed.modules : ["lm_tools", "beacon_lite_tactic", "beacon_lite_cross_tactic"];
     if (parsed.modules && parsed.modules.length > 0) {
       await setUserModules(created.userId, parsed.modules);
     }

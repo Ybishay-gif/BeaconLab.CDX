@@ -59,8 +59,25 @@ export const ALL_PERMISSIONS_LIST: string[] = [...ALL_PERMISSIONS];
 
 /** Grouped for the roles UI permission editor */
 export const PERMISSION_GROUPS: Record<string, { label: string; permissions: string[] }> = {
-  plan: {
-    label: "Plan",
+  beacon_lite_tactic: {
+    label: "Beacon Lite - Tactic",
+    permissions: [
+      "state_channel_performance:view",
+      "price_exploration_analytics:view",
+      "leads:view",
+      "leads:export",
+    ],
+  },
+  beacon_lite_cross_tactic: {
+    label: "Beacon Lite - Cross Tactic",
+    permissions: [
+      "report_generator:edit",
+      "budgets:view",
+      "budgets:edit",
+    ],
+  },
+  lm_tools_plan: {
+    label: "LM Tools - Plan",
     permissions: [
       "plan_builder:view",
       "plan_builder:edit",
@@ -76,32 +93,19 @@ export const PERMISSION_GROUPS: Record<string, { label: string; permissions: str
       "ad_group_levers:edit",
     ],
   },
-  analytics: {
-    label: "Analytics",
-    permissions: [
-      "state_channel_performance:view",
-      "price_exploration_analytics:view",
-      "strategy_analysis:view",
-      "plan_comparison:view",
-      "state_analytics:view",
-      "leads:view",
-      "leads:export",
-    ],
-  },
-  modules: {
-    label: "Modules",
+  lm_tools_channel: {
+    label: "LM Tools - Channel Rec",
     permissions: [
       "channel_recommendations:view",
       "channel_recommendations:edit",
-      "ad_group_levers:view",
-      "ad_group_levers:edit",
     ],
   },
-  cross_tactic: {
-    label: "Cross Tactic",
+  lm_tools_analytics: {
+    label: "LM Tools - Analytics",
     permissions: [
-      "budgets:view",
-      "budgets:edit",
+      "strategy_analysis:view",
+      "plan_comparison:view",
+      "state_analytics:view",
     ],
   },
   general: {
@@ -110,10 +114,9 @@ export const PERMISSION_GROUPS: Record<string, { label: string; permissions: str
       "ai_chat:view",
     ],
   },
-  settings: {
-    label: "Settings",
+  kissterra_settings: {
+    label: "Kissterra Tools - Settings",
     permissions: [
-      "report_generator:edit",
       "default_targets:edit",
       "user_management:view",
       "user_management:edit",
