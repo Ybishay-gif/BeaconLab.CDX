@@ -147,10 +147,14 @@ export async function fetchMatchingBqRows(
     params[paramName] = matchParams[mk.bqColumn];
   }
 
+  // Safety limit: cap BQ results to 50K rows to prevent memory issues
+  const BQ_ROW_LIMIT = 50_000;
+
   const sql = `
     SELECT ${selectClause}
     FROM ${config.rawCrossTacticTable}
     WHERE ${whereParts.join("\n      AND ")}
+    LIMIT ${BQ_ROW_LIMIT}
   `;
 
   return bqQuery<Record<string, unknown>>(sql, params);
