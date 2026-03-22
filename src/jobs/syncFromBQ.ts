@@ -73,6 +73,27 @@ export function getSyncStatus(): SyncStatus {
   return { ...syncStatus, progress: { ...syncStatus.progress } };
 }
 
+/** Persist a sync run to sync_history for the Platform Health dashboard. */
+async function persistSyncResult(
+  startedAt: string,
+  completedAt: string,
+  result: SyncResult,
+  errorMsg?: string,
+): Promise<void> {
+  try {
+    const totalRows = result.tables.reduce((sum, t) => sum + t.rows, 0);
+    const errText = errorMsg ?? (result.ok ? null : result.tables.filter(t => t.error).map(t => `${t.table}: ${t.error}`).join("; "));
+    await pgExec(
+      `INSERT INTO sync_history (started_at, completed_at, ok, total_ms, total_rows, error, tables_json)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [startedAt, completedAt, result.ok, result.totalMs, totalRows, errText, JSON.stringify(result.tables)],
+    );
+    console.log("[sync] persisted sync history row");
+  } catch (err) {
+    console.error("[sync] failed to persist sync history:", err);
+  }
+}
+
 /**
  * Kicks off the BQ→PG sync in the background.
  * Returns immediately — poll GET /admin/sync-status for progress.
@@ -100,6 +121,9 @@ export function startSyncInBackground(): { started: boolean; message: string } {
       cacheClear();
       console.log(`[sync] completed in ${result.totalMs}ms — cache cleared`);
 
+      // Persist sync result to history table
+      await persistSyncResult(syncStatus.startedAt!, syncStatus.completedAt, result);
+
       // Alert on partial or full failure
       const failed = result.tables.filter(t => t.error);
       if (failed.length > 0) {
@@ -122,6 +146,15 @@ export function startSyncInBackground(): { started: boolean; message: string } {
       syncStatus.running = false;
       syncStatus.completedAt = new Date().toISOString();
       console.error(`[sync] failed:`, err);
+
+      // Persist failed sync to history table
+      await persistSyncResult(
+        syncStatus.startedAt!,
+        syncStatus.completedAt,
+        { ok: false, totalMs: 0, tables: [] },
+        syncStatus.error ?? undefined,
+      );
+
       await notifySlack(`:x: *BQ→PG sync crashed*: ${syncStatus.error}`);
     });
 

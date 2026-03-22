@@ -50,6 +50,7 @@ export const ALL_PERMISSIONS = [
   "audit_log:view",
   "usage_analytics:view",
   "sftp_connections:edit",
+  "platform_health:view",
 ] as const;
 
 export type PermissionKey = (typeof ALL_PERMISSIONS)[number];
@@ -129,6 +130,7 @@ export const PERMISSION_GROUPS: Record<string, { label: string; permissions: str
       "audit_log:view",
       "usage_analytics:view",
       "sftp_connections:edit",
+      "platform_health:view",
     ],
   },
 };

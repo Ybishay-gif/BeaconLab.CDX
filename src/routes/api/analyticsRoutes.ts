@@ -158,6 +158,22 @@ adminRoutes.post("/admin/clear-cache", requireAdminOrScheduler, (_req, res) => {
   res.json({ ok: true, message: "Analytics BQ cache cleared" });
 });
 
+// Ingest security test results from scheduled tasks (auth-test / pentest).
+adminRoutes.post("/admin/security-test-result", requireAdminOrScheduler, async (req, res) => {
+  try {
+    const { insertSecurityTestResult } = await import("../../services/platformHealthService.js");
+    const data = req.body;
+    if (!data?.suite || !data?.summary) {
+      res.status(400).json({ error: "Missing required fields: suite, summary" });
+      return;
+    }
+    const resultId = await insertSecurityTestResult(data);
+    res.status(201).json({ ok: true, resultId });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to ingest test result", detail: String(error) });
+  }
+});
+
 // Standalone snapshot of suggested Target CPB → BQ (manual trigger).
 adminRoutes.post("/admin/snapshot-suggested-cpb", requireAdminOrScheduler, async (_req, res) => {
   try {

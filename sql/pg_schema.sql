@@ -395,3 +395,38 @@ CREATE TABLE IF NOT EXISTS budget_allocations (
   UNIQUE (budget_id, account_name)
 );
 CREATE INDEX idx_alloc_budget ON budget_allocations(budget_id);
+
+-- ── Platform Health ──────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS sync_history (
+  sync_id      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  started_at   TIMESTAMPTZ NOT NULL,
+  completed_at TIMESTAMPTZ,
+  ok           BOOLEAN NOT NULL DEFAULT FALSE,
+  total_ms     INTEGER,
+  total_rows   BIGINT DEFAULT 0,
+  error        TEXT,
+  tables_json  JSONB NOT NULL DEFAULT '[]',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_sync_history_started ON sync_history(started_at DESC);
+
+CREATE TABLE IF NOT EXISTS security_test_results (
+  result_id      TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  test_type      TEXT NOT NULL CHECK (test_type IN ('auth-security', 'pentest')),
+  ran_at         TIMESTAMPTZ NOT NULL,
+  environment    TEXT NOT NULL DEFAULT 'production',
+  target_url     TEXT,
+  passed         INTEGER NOT NULL DEFAULT 0,
+  failed         INTEGER NOT NULL DEFAULT 0,
+  critical_fails INTEGER NOT NULL DEFAULT 0,
+  high_fails     INTEGER NOT NULL DEFAULT 0,
+  medium_fails   INTEGER NOT NULL DEFAULT 0,
+  low_fails      INTEGER NOT NULL DEFAULT 0,
+  findings_json  JSONB NOT NULL DEFAULT '[]',
+  passed_checks  JSONB NOT NULL DEFAULT '[]',
+  status         TEXT NOT NULL DEFAULT 'no_errors'
+                   CHECK (status IN ('no_errors', 'critical_errors', 'minor_errors')),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_security_tests_ran ON security_test_results(ran_at DESC);
