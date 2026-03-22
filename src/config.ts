@@ -36,4 +36,9 @@ export const config = {
 
   // Shared secret for Cloud Scheduler → admin endpoint auth (optional; falls back to session auth)
   schedulerSecret: process.env.SCHEDULER_SECRET || "",
+
+  // Telegram bot
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || "",
+  telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || "",
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
 };

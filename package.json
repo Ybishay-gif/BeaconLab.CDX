@@ -11,6 +11,7 @@
     "test": "GOOGLE_CLOUD_PROJECT=test-project BQ_DATASET=test_dataset ADMIN_ACCESS_CODE=test-code node --import tsx --test $(find src -name \"*.test.ts\" -print)"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
     "@google-cloud/bigquery": "^7.8.0",
     "@google-cloud/storage": "^7.19.0",
     "@google/generative-ai": "^0.24.1",
@@ -20,6 +21,7 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^8.3.1",
+    "grammy": "^1.41.1",
     "pdfkit": "^0.18.0",
     "pg": "^8.20.0",
     "pg-copy-streams": "^7.0.0",

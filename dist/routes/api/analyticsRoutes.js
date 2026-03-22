@@ -9,7 +9,8 @@ import { resolveQbc } from "../../services/shared/activityScope.js";
 import { cacheClear, cacheStats } from "../../cache.js";
 import { requireUser } from "../../middleware/auth.js";
 import { config } from "../../config.js";
-import { getCrossTacticSchema, getCrossTacticAggregation, getFilterValues as getCrossTacticFilterValues, } from "../../services/crossTacticService.js";
+import { getCrossTacticSchema, getCrossTacticAggregation, getCrossTacticComparison, INVERSE_MEASURES, getFilterValues as getCrossTacticFilterValues, } from "../../services/crossTacticService.js";
+import { listPresets, createPreset, deletePreset, } from "../../services/crossTacticPresetsService.js";
 export const analyticsRoutes = Router();
 // ── Admin endpoints — require auth OR internal scheduler secret ─────────────
 export const adminRoutes = Router();
@@ -328,33 +329,34 @@ analyticsRoutes.get("/analytics/cross-tactic/filter-values", async (req, res, ne
         next(error);
     }
 });
+/** Parse the shared cross-tactic request body */
+function parseCrossTacticBody(body) {
+    const dimensions = Array.isArray(body.dimensions) ? body.dimensions : [];
+    const metrics = Array.isArray(body.metrics) ? body.metrics : ["opps", "bids", "sold", "total_cost"];
+    const filters = typeof body.filters === "object" && body.filters ? body.filters : {};
+    const dynamicFilters = Array.isArray(body.dynamicFilters) ? body.dynamicFilters : [];
+    const startDate = typeof body.startDate === "string" ? body.startDate : "";
+    const endDate = typeof body.endDate === "string" ? body.endDate : "";
+    const drillPath = Array.isArray(body.drillPath) ? body.drillPath : [];
+    const qbc = typeof body.qbc === "number" ? body.qbc : 0;
+    const qbcClicks = typeof body.qbcClicks === "number" ? body.qbcClicks : undefined;
+    const qbcLeadsCalls = typeof body.qbcLeadsCalls === "number" ? body.qbcLeadsCalls : undefined;
+    const compareStartDate = typeof body.compareStartDate === "string" ? body.compareStartDate : undefined;
+    const compareEndDate = typeof body.compareEndDate === "string" ? body.compareEndDate : undefined;
+    return { dimensions, metrics, filters, dynamicFilters, startDate, endDate, drillPath, qbc, qbcClicks, qbcLeadsCalls, compareStartDate, compareEndDate };
+}
 analyticsRoutes.post("/analytics/cross-tactic", async (req, res, next) => {
     try {
-        const body = req.body;
-        const dimensions = Array.isArray(body.dimensions) ? body.dimensions : [];
-        const metrics = Array.isArray(body.metrics) ? body.metrics : ["opps", "bids", "sold", "total_cost"];
-        const filters = typeof body.filters === "object" && body.filters ? body.filters : {};
-        const startDate = typeof body.startDate === "string" ? body.startDate : "";
-        const endDate = typeof body.endDate === "string" ? body.endDate : "";
-        const drillPath = Array.isArray(body.drillPath) ? body.drillPath : [];
-        const qbc = typeof body.qbc === "number" ? body.qbc : 0;
-        if (!dimensions.length) {
+        const parsed = parseCrossTacticBody(req.body);
+        if (!parsed.dimensions.length) {
             res.status(400).json({ error: "dimensions array is required (1-10 items)" });
             return;
         }
-        if (!startDate || !endDate) {
+        if (!parsed.startDate || !parsed.endDate) {
             res.status(400).json({ error: "startDate and endDate are required" });
             return;
         }
-        const result = await getCrossTacticAggregation({
-            dimensions,
-            metrics,
-            filters,
-            startDate,
-            endDate,
-            drillPath,
-            qbc,
-        });
+        const result = await getCrossTacticAggregation(parsed);
         res.json(result);
     }
     catch (error) {
@@ -362,6 +364,71 @@ analyticsRoutes.post("/analytics/cross-tactic", async (req, res, next) => {
             res.status(400).json({ error: error.message });
             return;
         }
+        next(error);
+    }
+});
+analyticsRoutes.post("/analytics/cross-tactic/compare", async (req, res, next) => {
+    try {
+        const parsed = parseCrossTacticBody(req.body);
+        if (!parsed.dimensions.length) {
+            res.status(400).json({ error: "dimensions array is required" });
+            return;
+        }
+        if (!parsed.startDate || !parsed.endDate || !parsed.compareStartDate || !parsed.compareEndDate) {
+            res.status(400).json({ error: "startDate, endDate, compareStartDate, and compareEndDate are required" });
+            return;
+        }
+        const result = await getCrossTacticComparison(parsed);
+        res.json({ ...result, inverseMeasures: [...INVERSE_MEASURES] });
+    }
+    catch (error) {
+        if (error instanceof Error && error.message.startsWith("Invalid")) {
+            res.status(400).json({ error: error.message });
+            return;
+        }
+        next(error);
+    }
+});
+// ── Presets ──
+analyticsRoutes.get("/analytics/cross-tactic/presets", async (req, res, next) => {
+    try {
+        const userId = req.user?.userId;
+        if (!userId) {
+            res.status(401).json({ error: "Not authenticated" });
+            return;
+        }
+        const presets = await listPresets(userId);
+        res.json({ presets });
+    }
+    catch (error) {
+        next(error);
+    }
+});
+analyticsRoutes.post("/analytics/cross-tactic/presets", async (req, res, next) => {
+    try {
+        const userId = req.user?.userId;
+        if (!userId) {
+            res.status(401).json({ error: "Not authenticated" });
+            return;
+        }
+        const { presetName, config } = req.body;
+        if (!presetName || !config) {
+            res.status(400).json({ error: "presetName and config are required" });
+            return;
+        }
+        const result = await createPreset(userId, presetName, config);
+        res.json(result);
+    }
+    catch (error) {
+        next(error);
+    }
+});
+analyticsRoutes.delete("/analytics/cross-tactic/presets/:id", async (req, res, next) => {
+    try {
+        await deletePreset(req.params.id);
+        res.json({ ok: true });
+    }
+    catch (error) {
         next(error);
     }
 });

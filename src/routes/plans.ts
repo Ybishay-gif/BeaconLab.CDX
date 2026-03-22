@@ -16,11 +16,15 @@ import { reportRoutes } from "./api/reportRoutes.js";
 import { sftpRoutes } from "./api/sftpRoutes.js";
 import { rolesRoutes } from "./api/rolesRoutes.js";
 import { adLeverRoutes } from "./api/adLeverRoutes.js";
+import { telegramRoutes } from "./api/telegramRoutes.js";
 
 export const plansRouter = Router();
 
 // Admin routes (cache warming, etc.) — requires auth OR Cloud Scheduler header
 plansRouter.use(adminRoutes);
+
+// Telegram webhook — no session auth (validated by secret path segment)
+plansRouter.use(telegramRoutes);
 
 plansRouter.use(authRoutes);
 plansRouter.use(requireUser);

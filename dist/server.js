@@ -8,6 +8,7 @@ import { config } from "./config.js";
 import { healthRouter } from "./routes/health.js";
 import { plansRouter } from "./routes/plans.js";
 import { DEFAULT_ROLE_PERMISSIONS } from "./permissions.js";
+import { registerTelegramWebhook } from "./routes/api/telegramRoutes.js";
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -588,6 +589,18 @@ async function runMigrations() {
     `);
         await pgExec("CREATE INDEX IF NOT EXISTS idx_sftp_uploads_report ON sftp_uploads(report_id)");
         await pgExec("CREATE INDEX IF NOT EXISTS idx_sftp_uploads_status ON sftp_uploads(status)");
+        // Cross Tactic Explorer presets
+        await pgExec(`
+      CREATE TABLE IF NOT EXISTS cross_tactic_presets (
+        preset_id   TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+        user_id     TEXT NOT NULL,
+        preset_name TEXT NOT NULL,
+        config      JSONB NOT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+        await pgExec("CREATE INDEX IF NOT EXISTS idx_cross_tactic_presets_user ON cross_tactic_presets(user_id, created_at DESC)");
         console.log("Migrations OK");
     }
     catch (err) {
@@ -602,6 +615,13 @@ async function main() {
     // must be added manually via the Roles page.
     app.listen(config.port, () => {
         console.log(`planning-app-api listening on port ${config.port}`);
+        // Register Telegram webhook (idempotent — safe on every startup)
+        if (config.telegramBotToken) {
+            const baseUrl = process.env.K_SERVICE
+                ? `https://planning-app-api-758008223769.us-central1.run.app`
+                : `http://localhost:${config.port}`;
+            registerTelegramWebhook(baseUrl).catch((err) => console.warn("[telegram-bot] Webhook registration failed:", err));
+        }
     });
 }
 main().catch((err) => {

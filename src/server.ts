@@ -8,6 +8,7 @@ import { config } from "./config.js";
 import { healthRouter } from "./routes/health.js";
 import { plansRouter } from "./routes/plans.js";
 import { ALL_PERMISSIONS, DEFAULT_ROLE_PERMISSIONS } from "./permissions.js";
+import { registerTelegramWebhook } from "./routes/api/telegramRoutes.js";
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
@@ -674,6 +675,16 @@ async function main() {
 
   app.listen(config.port, () => {
     console.log(`planning-app-api listening on port ${config.port}`);
+
+    // Register Telegram webhook (idempotent — safe on every startup)
+    if (config.telegramBotToken) {
+      const baseUrl = process.env.K_SERVICE
+        ? `https://planning-app-api-758008223769.us-central1.run.app`
+        : `http://localhost:${config.port}`;
+      registerTelegramWebhook(baseUrl).catch((err) =>
+        console.warn("[telegram-bot] Webhook registration failed:", err)
+      );
+    }
   });
 }
 
