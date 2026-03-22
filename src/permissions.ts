@@ -20,6 +20,8 @@ export const ALL_PERMISSIONS = [
   "strategy_analysis:view",
   "plan_comparison:view",
   "state_analytics:view",
+  "leads:view",
+  "leads:export",
 
   // Module pages
   "channel_recommendations:view",
@@ -78,6 +80,8 @@ export const PERMISSION_GROUPS: Record<string, { label: string; permissions: str
       "strategy_analysis:view",
       "plan_comparison:view",
       "state_analytics:view",
+      "leads:view",
+      "leads:export",
     ],
   },
   modules: {
@@ -136,6 +140,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "strategy_analysis:view",
     "plan_comparison:view",
     "state_analytics:view",
+    "leads:view",
+    "leads:export",
     // Modules — full access
     "channel_recommendations:view",
     "channel_recommendations:edit",
@@ -162,6 +168,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "strategy_analysis:view",
     "plan_comparison:view",
     "state_analytics:view",
+    "leads:view",
     "channel_recommendations:view",
     "ad_group_levers:view",
     "ai_chat:view",
