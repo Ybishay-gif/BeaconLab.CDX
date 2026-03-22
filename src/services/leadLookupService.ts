@@ -524,17 +524,22 @@ export async function getLeadDetails(
   const queryParams = { identifier_value: cleanValue, ...params };
   let rawRows = await bqQuery<Record<string, unknown>>(sql, queryParams);
 
-  // Fallback: try "with opps" table if main table returned nothing
+  // Fallback: try "with opps" table using SELECT * (schema differs from main table)
   if (rawRows.length === 0 && config.rawCrossTacticWithOppsTable) {
     console.log(`[lead-lookup] getLeadDetails: 0 results in main table, trying opps table`);
     try {
-      const oppsSql = sql.replace(config.rawCrossTacticTable, config.rawCrossTacticWithOppsTable);
+      const oppsSql = `
+        SELECT *
+        FROM ${config.rawCrossTacticWithOppsTable}
+        WHERE ${clause}
+        ORDER BY Data_DateCreated ${orderDir}
+        ${limitClause}
+      `;
       rawRows = await bqQuery<Record<string, unknown>>(oppsSql, queryParams);
       if (rawRows.length > 0) {
         console.log(`[lead-lookup] getLeadDetails: found ${rawRows.length} rows in opps table`);
       }
     } catch (err) {
-      // Some columns may not exist in opps table — log and return empty
       console.warn(`[lead-lookup] getLeadDetails: opps table fallback failed:`, err instanceof Error ? err.message : err);
     }
   }
@@ -607,11 +612,17 @@ async function queryForExport(
   const queryParams = { identifier_value: cleanValue, ...params };
   let rows = await bqQuery<Record<string, unknown>>(sql, queryParams);
 
-  // Fallback: try "with opps" table if main table returned nothing
+  // Fallback: try "with opps" table using SELECT * (schema differs from main table)
   if (rows.length === 0 && config.rawCrossTacticWithOppsTable) {
     console.log(`[lead-lookup] queryForExport: 0 results in main table, trying opps table`);
     try {
-      const oppsSql = sql.replace(config.rawCrossTacticTable, config.rawCrossTacticWithOppsTable);
+      const oppsSql = `
+        SELECT *
+        FROM ${config.rawCrossTacticWithOppsTable}
+        WHERE ${clause}
+        ORDER BY Data_DateCreated DESC
+        LIMIT 1000
+      `;
       rows = await bqQuery<Record<string, unknown>>(oppsSql, queryParams);
       if (rows.length > 0) {
         console.log(`[lead-lookup] queryForExport: found ${rows.length} rows in opps table`);
