@@ -72,6 +72,8 @@ export type CrossTacticRequest = {
   endDate: string;
   drillPath: DrillStep[];
   qbc?: number;
+  qbcClicks?: number;
+  qbcLeadsCalls?: number;
   // Compare mode
   compareStartDate?: string;
   compareEndDate?: string;
@@ -418,8 +420,10 @@ export async function getCrossTacticAggregation(
 
   // Resolve which BQ measures are actually needed (including hidden deps for derived)
   const neededBqMeasures = resolveNeededBqMeasures(req.metrics);
+  const injectQbc = needsPerRowQbc(req.metrics);
 
   // ── Cache ──
+  // Include QBC values in cache key when ROE/COR requested (they affect the SQL _qbc_bind_sum column)
   const cacheKey = buildCacheKey("cross-tactic", {
     dimensions: req.dimensions,
     metrics: req.metrics,
@@ -428,10 +432,11 @@ export async function getCrossTacticAggregation(
     startDate: req.startDate,
     endDate: req.endDate,
     drillPath: JSON.stringify(req.drillPath),
+    ...(injectQbc ? { qbcClicks: req.qbcClicks ?? req.qbc ?? 0, qbcLeadsCalls: req.qbcLeadsCalls ?? req.qbc ?? 0 } : {}),
   });
 
   const rawRows = await cached<Record<string, unknown>[]>(cacheKey, async () => {
-    const { sql, params } = buildAggregationSql(req, neededBqMeasures);
+    const { sql, params } = buildAggregationSql(req, neededBqMeasures, injectQbc);
     return bqQuery<Record<string, unknown>>(sql, params);
   }, CACHE_TTL);
 
@@ -439,14 +444,20 @@ export async function getCrossTacticAggregation(
   const rows = rawRows.map((r) => ({ ...r }));
 
   // Compute derived measures
-  const qbc = req.qbc ?? 0;
   const selectedDerived = req.metrics.filter((m) => VALID_DERIVED_MEASURES.has(m));
   for (const row of rows) {
     const numRow = row as Record<string, number>;
+    // Resolve per-row QBC from the weighted _qbc_bind_sum column
+    const rowQbc = injectQbc && numRow.binds > 0
+      ? numRow._qbc_bind_sum / numRow.binds
+      : (req.qbc ?? 0);
+
     for (const key of selectedDerived) {
       const def = DERIVED_MEASURES[key];
-      row[key] = def.compute(numRow, qbc);
+      row[key] = def.compute(numRow, rowQbc);
     }
+    // Strip hidden QBC column from output
+    delete row._qbc_bind_sum;
   }
 
   return {
@@ -479,9 +490,15 @@ function resolveNeededBqMeasures(selectedMetrics: string[]): string[] {
 
 // ── SQL Builder ──────────────────────────────────────────────────────
 
+/** Checks whether any QBC-dependent derived measure (ROE, COR) is selected */
+function needsPerRowQbc(metrics: string[]): boolean {
+  return metrics.includes("roe") || metrics.includes("cor");
+}
+
 function buildAggregationSql(
   req: CrossTacticRequest,
-  bqMeasures: string[]
+  bqMeasures: string[],
+  injectQbcColumn = false
 ): { sql: string; params: Record<string, unknown> } {
   const params: Record<string, unknown> = {};
   let paramIdx = 0;
@@ -514,6 +531,19 @@ function buildAggregationSql(
   for (const measureKey of bqMeasures) {
     const def = BQ_MEASURES[measureKey];
     selectParts.push(`${def.sqlExpr} AS \`${measureKey}\``);
+  }
+
+  // Inject per-row QBC column: weighted sum of QBC * binds by activity type
+  if (injectQbcColumn) {
+    selectParts.push(
+      `SUM(CASE WHEN LOWER(\`Origin_ActivityType\`) LIKE '%click%' THEN \`TotalBinds\` * @qbcClicks ELSE \`TotalBinds\` * @qbcLeadsCalls END) AS \`_qbc_bind_sum\``
+    );
+  }
+
+  // QBC params for injected column
+  if (injectQbcColumn) {
+    params.qbcClicks = req.qbcClicks ?? req.qbc ?? 0;
+    params.qbcLeadsCalls = req.qbcLeadsCalls ?? req.qbc ?? 0;
   }
 
   // WHERE
@@ -635,33 +665,37 @@ export async function getCrossTacticComparison(
   if (!req.startDate || !req.endDate) throw new Error("startDate and endDate are required");
 
   const neededBqMeasures = resolveNeededBqMeasures(req.metrics);
+  const injectQbc = needsPerRowQbc(req.metrics);
 
   // Build main + compare requests
   const mainReq = { ...req };
   const compareReq = { ...req, startDate: req.compareStartDate!, endDate: req.compareEndDate! };
 
-  // Cache keys
+  // Cache keys — include QBC values when ROE/COR requested
+  const qbcCachePart = injectQbc ? { qbcClicks: req.qbcClicks ?? req.qbc ?? 0, qbcLeadsCalls: req.qbcLeadsCalls ?? req.qbc ?? 0 } : {};
   const mainCacheKey = buildCacheKey("cross-tactic", {
     dimensions: req.dimensions, metrics: req.metrics,
     filters: JSON.stringify(req.filters), dynamicFilters: JSON.stringify(req.dynamicFilters ?? []),
     startDate: req.startDate, endDate: req.endDate,
     drillPath: JSON.stringify(req.drillPath),
+    ...qbcCachePart,
   });
   const compareCacheKey = buildCacheKey("cross-tactic", {
     dimensions: req.dimensions, metrics: req.metrics,
     filters: JSON.stringify(req.filters), dynamicFilters: JSON.stringify(req.dynamicFilters ?? []),
     startDate: req.compareStartDate!, endDate: req.compareEndDate!,
     drillPath: JSON.stringify(req.drillPath),
+    ...qbcCachePart,
   });
 
   // Run both in parallel
   const [mainRows, compareRows] = await Promise.all([
     cached<Record<string, unknown>[]>(mainCacheKey, async () => {
-      const { sql, params } = buildAggregationSql(mainReq, neededBqMeasures);
+      const { sql, params } = buildAggregationSql(mainReq, neededBqMeasures, injectQbc);
       return bqQuery<Record<string, unknown>>(sql, params);
     }, CACHE_TTL),
     cached<Record<string, unknown>[]>(compareCacheKey, async () => {
-      const { sql, params } = buildAggregationSql(compareReq, neededBqMeasures);
+      const { sql, params } = buildAggregationSql(compareReq, neededBqMeasures, injectQbc);
       return bqQuery<Record<string, unknown>>(sql, params);
     }, CACHE_TTL),
   ]);
@@ -675,27 +709,37 @@ export async function getCrossTacticComparison(
   }
 
   // Compute derived + diffs
-  const qbc = req.qbc ?? 0;
+  const fallbackQbc = req.qbc ?? 0;
   const selectedDerived = req.metrics.filter((m) => VALID_DERIVED_MEASURES.has(m));
 
   const resultRows = mainRows.map((mainRow) => {
     const row = { ...mainRow };
     const compareRow = compareMap.get(dimKey(mainRow));
 
-    // Compute derived measures on main
+    // Resolve per-row QBC from the weighted _qbc_bind_sum column
     const numRow = row as Record<string, number>;
+    const mainQbc = injectQbc && numRow.binds > 0
+      ? numRow._qbc_bind_sum / numRow.binds
+      : fallbackQbc;
+
+    // Compute derived measures on main
     for (const key of selectedDerived) {
       const def = DERIVED_MEASURES[key];
-      row[key] = def.compute(numRow, qbc);
+      row[key] = def.compute(numRow, mainQbc);
     }
+    // Strip hidden QBC column
+    delete row._qbc_bind_sum;
 
     // Compute derived on compare
     const compareVals: Record<string, number | null> = {};
     if (compareRow) {
       const numCompare = { ...compareRow } as Record<string, number>;
+      const compareQbc = injectQbc && numCompare.binds > 0
+        ? numCompare._qbc_bind_sum / numCompare.binds
+        : fallbackQbc;
       for (const key of selectedDerived) {
         const def = DERIVED_MEASURES[key];
-        compareVals[key] = def.compute(numCompare, qbc);
+        compareVals[key] = def.compute(numCompare, compareQbc);
       }
     }
 
